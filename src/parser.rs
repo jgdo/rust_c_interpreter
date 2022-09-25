@@ -3,7 +3,8 @@ use regex::Regex;
 use crate::ast;
 use ast::Operator;
 use crate::ast::{CompoundStmt, Expr, Stmt, Type, Variable};
-use crate::ast::Operator::{Div, Eq, Minus, Plus, Times};
+use crate::ast::Operator::{Div, Eq, Greater, Minus, Neq, Plus, Times};
+use crate::ast::Stmt::Empty;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Literal {
@@ -16,10 +17,17 @@ pub enum Token {
     Operator(Operator),
     LP,
     RP,
-    End,
+    StopTag,
     Type(ast::Type),
     Sem,
     Identifier(String),
+    While,
+    Begin,
+    // {
+    End,
+    // }
+    If,
+    Else,
 }
 
 struct Parser {
@@ -30,7 +38,7 @@ struct Parser {
 impl Parser {
     fn peek(&self) -> &Token {
         if self.current_pos >= self.tokens.len() {
-            return &Token::End;
+            return &Token::StopTag;
         }
 
         return &self.tokens[self.current_pos];
@@ -125,7 +133,7 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::Operator(ref op) => {
-                    if *op == Eq {
+                    if *op == Eq || *op == Neq || *op == Greater{
                         let op = *op;
                         self.take();
                         let rhs = self.parse_add_expr();
@@ -141,31 +149,73 @@ impl Parser {
         return expr;
     }
 
+    fn parse_condition(&mut self) -> Expr {
+        self.accept(Token::LP);
+        let condition = self.parse_expr();
+        self.accept(Token::RP);
+        return condition;
+    }
+
     fn parse_statement(&mut self) -> Stmt {
-        let exp = match self.peek() {
+        match self.peek() {
             Token::Type(t) => {
                 let t = *t;
                 self.take();
                 let name = self.take_identifier();
 
-                if *self.peek() == Token::Operator(Operator::Eq) {
+                let ret = if *self.peek() == Token::Operator(Operator::Eq) {
                     self.take();
                     let expr = self.parse_expr();
                     Stmt::VarDecl(t, name, Some(expr))
                 } else {
                     Stmt::VarDecl(t, name, None)
-                }
+                };
+
+                self.accept(Token::Sem);
+                return ret;
             }
-            _ => Stmt::Expr(self.parse_expr()),
-        };
-        self.accept(Token::Sem);
-        return exp;
+            Token::While => {
+                self.take();
+                let condition = self.parse_condition();
+                let body = self.parse_statement();
+                let ret = Stmt::While(condition, Box::new(body));
+                return ret;
+            }
+            Token::If => {
+                self.take();
+                let condition = self.parse_condition();
+                let body_if = self.parse_statement();
+
+                let body_else = if *self.peek() == Token::Else {
+                    self.take();
+                    Some(Box::new(self.parse_statement()))
+                } else { None };
+
+                let ret = Stmt::If(condition, Box::new(body_if), body_else);
+                return ret;
+            },
+            Token::Begin => {
+                self.take();
+                let ret = self.parse_compound_statement();
+                self.accept(Token::End);
+                return Stmt::Compound(Box::new(ret));
+            },
+            Token::Sem => {
+                self.take();
+                return Empty
+            },
+            _ => {
+                let ret = Stmt::Expr(self.parse_expr());
+                self.accept(Token::Sem);
+                return ret;
+            }
+        }
     }
 
     fn parse_compound_statement(&mut self) -> CompoundStmt {
         let mut statements: Vec<Stmt> = vec![];
 
-        while *self.peek() != Token::End {
+        while *self.peek() != Token::StopTag && *self.peek() != Token::End {
             statements.push(self.parse_statement());
         }
 
@@ -178,7 +228,7 @@ pub fn parse_expr(all_tokens: Vec<Token>) -> Expr {
     let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
 
     let res = parser.parse_expr();
-    if *parser.peek() != Token::End {
+    if *parser.peek() != Token::StopTag {
         panic!("Unexpected tokens remaining");
     }
     return res;
@@ -188,7 +238,7 @@ pub fn parse_compound_stmt(all_tokens: Vec<Token>) -> CompoundStmt {
     let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
 
     let res = parser.parse_compound_statement();
-    if *parser.peek() != Token::End {
+    if *parser.peek() != Token::StopTag {
         panic!("Unexpected tokens remaining");
     }
     return res;
@@ -196,7 +246,7 @@ pub fn parse_compound_stmt(all_tokens: Vec<Token>) -> CompoundStmt {
 
 pub fn tokenize(text: &str) -> Vec<Token> {
     // TODO this will actually match more than it should, fix eventually
-    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|([+\-*/=])|([0-9]+)|\(|\)|(int)|;").unwrap();
+    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>").unwrap();
 
     let mut res: Vec<Token> = vec![];
     for m in re.find_iter(text) {
@@ -206,17 +256,24 @@ pub fn tokenize(text: &str) -> Vec<Token> {
             'A'..='Z' | 'a'..='z' | '_' => {
                 match m_str {
                     "int" => res.push(Token::Type(Type::Int)),
+                    "while" => res.push(Token::While),
+                    "if" => res.push(Token::If),
+                    "else" => res.push(Token::Else),
                     _ => res.push(Token::Identifier(m_str.parse().unwrap()))
                 }
             }
             '0'..='9' => res.push(Token::Literal(Literal { value: m_str.parse::<i32>().unwrap() })),
             '(' => res.push(Token::LP),
             ')' => res.push(Token::RP),
+            '{' => res.push(Token::Begin),
+            '}' => res.push(Token::End),
             '+' => res.push(Token::Operator(Plus)),
             '-' => res.push(Token::Operator(Minus)),
             '*' => res.push(Token::Operator(Times)),
             '/' => res.push(Token::Operator(Div)),
             '=' => res.push(Token::Operator(Eq)),
+            '!' => res.push(Token::Operator(Neq)), // TODO will match more
+            '>' => res.push(Token::Operator(Greater)),
             ';' => res.push(Token::Sem),
             _ => { panic!("cannot tokenize '{}'", m_str) }
         }

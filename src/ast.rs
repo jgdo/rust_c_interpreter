@@ -5,6 +5,8 @@ pub enum Operator {
     Times,
     Div,
     Eq,
+    Neq,
+    Greater,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -33,11 +35,15 @@ pub enum Type {
 pub enum Stmt {
     Expr(Expr),
     VarDecl(Type, String, Option<Expr>),
+    Compound(Box<CompoundStmt>),
+    While(Expr, Box<Stmt>),
+    If(Expr, Box<Stmt>, Option<Box<Stmt>>),
+    Empty,
 }
 
 #[derive(PartialEq, Debug)]
 pub struct CompoundStmt {
-    pub(crate) statements: Vec<Stmt>,
+    pub statements: Vec<Stmt>,
 }
 
 pub trait Visitor<R> {
@@ -45,6 +51,9 @@ pub trait Visitor<R> {
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> R;
     fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> R;
     fn visit_var(&mut self, var: &Variable) -> R;
+    fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> R;
+    fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> R;
+    fn visit_empty(&mut self) -> R;
 
     fn visit_expr(&mut self, e: &Expr) -> R {
         match e {
@@ -58,6 +67,10 @@ pub trait Visitor<R> {
         match stmt {
             Stmt::Expr(ref expr) => self.visit_expr(expr),
             Stmt::VarDecl(ref t, ref name, ref opt_init) => self.visit_var_decl(t, name, opt_init),
+            Stmt::Compound(ref compound) => self.visit_compound_statement(compound),
+            Stmt::While(ref cond, ref body) => self.visit_while(cond, body),
+            Stmt::If(cond, ref body_if, ref opt_body_else) => self.visit_if(cond, body_if, opt_body_else),
+            Stmt::Empty => self.visit_empty()
         }
     }
 

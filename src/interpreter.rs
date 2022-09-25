@@ -33,6 +33,8 @@ impl Visitor<i32> for Interpreter {
                     _ => panic!("Cannot assign value to expression")
                 }
             }
+            Operator::Neq => if self.visit_expr(lhs) != self.visit_expr(rhs) { 1 } else { 0 },
+            Operator::Greater => if self.visit_expr(lhs) > self.visit_expr(rhs) { 1 } else { 0 },
         }
     }
 
@@ -48,6 +50,28 @@ impl Visitor<i32> for Interpreter {
 
     fn visit_var(&mut self, var: &Variable) -> i32 {
         *self.variables.get(&*var.name).unwrap()
+    }
+
+    fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> i32 {
+        while self.visit_expr(cond) != 0 {
+            self.visit_statement(body);
+        }
+
+        return 0; // TODO this is actually a hack
+    }
+
+    fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> i32 {
+        if self.visit_expr(cond) != 0 {
+            self.visit_statement(body_if)
+        } else {
+            opt_body_else.as_ref().map_or(0, |body_else| { // TODO this is actually a hack
+                self.visit_statement(&*body_else)
+            })
+        }
+    }
+
+    fn visit_empty(&mut self) -> i32 {
+        return 0; // TODO this is actually a hack
     }
 }
 

@@ -8,7 +8,18 @@ use ast::Visitor;
 use crate::interpreter::Interpreter;
 
 fn main() {
-    let tokens = parser::tokenize("int a = 5; a = a+2; a;");
+    let tokens = parser::tokenize(r"
+    int a = 1071;
+    int b = 462;
+    while (a != b) {
+        if (a > b) {
+            a = a -b;
+        } else {
+            b = b - a;
+        }
+    }
+    a;
+    ");
     let statements = parser::parse_compound_stmt(tokens);
 
     let mut interp = Interpreter::new();
