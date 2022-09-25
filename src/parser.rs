@@ -1,13 +1,15 @@
+use regex::Regex;
 use crate::ast;
 use ast::Operator;
 use crate::ast::Expr;
+use crate::ast::Operator::{Div, Minus, Plus, Times};
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Literal {
     pub value: i32,
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Token {
     Literal(Literal),
     Operator(Operator),
@@ -120,12 +122,57 @@ pub fn parse_expr(all_tokens: Vec<Token>) -> ast::Expr {
     return res;
 }
 
+pub fn tokenize(text: &str) -> Vec<Token> {
+    // TODO this will actually match more than it should, fix eventually
+    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|([+\-*/])|([0-9]+)|\(|\)").unwrap();
+
+    let mut res: Vec<Token> = vec![];
+    for m in re.find_iter(text) {
+        let m_str = m.as_str();
+
+        match m_str.chars().next().unwrap() {
+            'A'..='Z' | 'a'..='z' | '_' => { panic!("Variables not implemented"); }
+            '0'..='9' => res.push(Token::Literal(Literal { value: m_str.parse::<i32>().unwrap() })),
+            '(' => res.push(Token::LP),
+            ')' => res.push(Token::RP),
+            '+' => res.push(Token::Operator(Plus)),
+            '-' => res.push(Token::Operator(Minus)),
+            '*' => res.push(Token::Operator(Times)),
+            '/' => res.push(Token::Operator(Div)),
+            _ => { panic!("cannot tokenize '{}'", m_str) }
+        }
+    }
+
+    return res;
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast;
     use ast::Expr;
 
     use crate::parser as tok;
+
+    #[test]
+    fn tokenize() {
+        let tokes = tok::tokenize("(5 +3)- (2 )     *   7");
+
+        let expected = vec![
+            tok::Token::LP,
+            tok::Token::Literal(tok::Literal { value: 5 }),
+            tok::Token::Operator(ast::Operator::Plus),
+            tok::Token::Literal(tok::Literal { value: 3 }),
+            tok::Token::RP,
+            tok::Token::Operator(ast::Operator::Minus),
+            tok::Token::LP,
+            tok::Token::Literal(tok::Literal { value: 2 }),
+            tok::Token::RP,
+            tok::Token::Operator(ast::Operator::Times),
+            tok::Token::Literal(tok::Literal { value: 7 }),
+        ];
+
+        assert_eq!(tokes, expected);
+    }
 
     #[test]
     fn parse_expr() {
