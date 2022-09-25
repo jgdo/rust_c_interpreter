@@ -3,14 +3,15 @@ extern crate regex;
 mod ast;
 mod interpreter;
 mod parser;
+
 use ast::Visitor;
+use crate::interpreter::Interpreter;
 
 fn main() {
-    let tokens = parser::tokenize("(5+3)-(2)*7");
-    let expr = parser::parse_expr(tokens);
+    let tokens = parser::tokenize("int a = 5; a = a+2; a;");
+    let statements = parser::parse_compound_stmt(tokens);
 
-    let interp = interpreter::Interpreter{};
-    let result = interp.visit_expr(&expr);
-
-    println!("{}", result);
+    let mut interp = Interpreter::new();
+    let value = interp.visit_compound_statement(&statements);
+    println!("Result: {}", value);
 }
