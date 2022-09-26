@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Operator {
     Plus,
@@ -46,6 +48,30 @@ pub struct CompoundStmt {
     pub statements: Vec<Stmt>,
 }
 
+#[derive(PartialEq, Debug)]
+pub struct Param {
+    pub ptype: Type,
+    pub name: String,
+}
+
+#[derive(PartialEq, Debug)]
+pub struct FuncDef {
+    pub ret_type: Type,
+    pub name: String,
+    pub params: Vec<Param>,
+    pub body: CompoundStmt,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum ExtDecl {
+    FuncDef(FuncDef),
+}
+
+#[derive(PartialEq, Debug)]
+pub struct TranslationUnit {
+    pub functions: HashMap<String, FuncDef>,
+}
+
 pub trait Visitor<R> {
     fn visit_literal(&mut self, e: &Literal) -> R;
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> R;
@@ -54,6 +80,8 @@ pub trait Visitor<R> {
     fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> R;
     fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> R;
     fn visit_empty(&mut self) -> R;
+    fn visit_function_call(&mut self, unit: &TranslationUnit, name: &str, args: &Vec<R>) -> R;
+    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, i32>) -> R;
 
     fn visit_expr(&mut self, e: &Expr) -> R {
         match e {
@@ -67,21 +95,11 @@ pub trait Visitor<R> {
         match stmt {
             Stmt::Expr(ref expr) => self.visit_expr(expr),
             Stmt::VarDecl(ref t, ref name, ref opt_init) => self.visit_var_decl(t, name, opt_init),
-            Stmt::Compound(ref compound) => self.visit_compound_statement(compound),
+            Stmt::Compound(ref compound) => self.visit_compound_statement(compound, &HashMap::new()),
             Stmt::While(ref cond, ref body) => self.visit_while(cond, body),
             Stmt::If(cond, ref body_if, ref opt_body_else) => self.visit_if(cond, body_if, opt_body_else),
             Stmt::Empty => self.visit_empty()
         }
-    }
-
-    fn visit_compound_statement(&mut self, compound: &CompoundStmt) -> R {
-        let (last, first) = compound.statements.split_last().unwrap();
-
-        for stmt in first {
-            self.visit_statement(stmt);
-        }
-
-        return self.visit_statement(last);
     }
 }
 

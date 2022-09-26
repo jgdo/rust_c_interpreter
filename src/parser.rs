@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::os::linux::raw::stat;
 use regex::Regex;
 use crate::ast;
 use ast::Operator;
-use crate::ast::{CompoundStmt, Expr, Stmt, Type, Variable};
+use crate::ast::{CompoundStmt, Expr, ExtDecl, FuncDef, Param, Stmt, TranslationUnit, Type, Variable};
 use crate::ast::Operator::{Div, Eq, Greater, Minus, Neq, Plus, Times};
 use crate::ast::Stmt::Empty;
 
@@ -54,7 +55,7 @@ impl Parser {
         return res;
     }
 
-    fn take_identifier(&mut self) -> String {
+    fn parse_identifier(&mut self) -> String {
         let tok = self.take();
 
         match tok {
@@ -133,7 +134,7 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::Operator(ref op) => {
-                    if *op == Eq || *op == Neq || *op == Greater{
+                    if *op == Eq || *op == Neq || *op == Greater {
                         let op = *op;
                         self.take();
                         let rhs = self.parse_add_expr();
@@ -156,12 +157,18 @@ impl Parser {
         return condition;
     }
 
+    fn parse_type(&mut self) -> Type {
+        match self.take() {
+            Token::Type(t) => *t,
+            _ => panic!("Type expected"),
+        }
+    }
+
     fn parse_statement(&mut self) -> Stmt {
         match self.peek() {
-            Token::Type(t) => {
-                let t = *t;
-                self.take();
-                let name = self.take_identifier();
+            Token::Type(_) => {
+                let t = self.parse_type();
+                let name = self.parse_identifier();
 
                 let ret = if *self.peek() == Token::Operator(Operator::Eq) {
                     self.take();
@@ -193,17 +200,12 @@ impl Parser {
 
                 let ret = Stmt::If(condition, Box::new(body_if), body_else);
                 return ret;
-            },
-            Token::Begin => {
-                self.take();
-                let ret = self.parse_compound_statement();
-                self.accept(Token::End);
-                return Stmt::Compound(Box::new(ret));
-            },
+            }
+            Token::Begin => Stmt::Compound(Box::new(self.parse_compound_statement())),
             Token::Sem => {
                 self.take();
-                return Empty
-            },
+                return Empty;
+            }
             _ => {
                 let ret = Stmt::Expr(self.parse_expr());
                 self.accept(Token::Sem);
@@ -215,14 +217,54 @@ impl Parser {
     fn parse_compound_statement(&mut self) -> CompoundStmt {
         let mut statements: Vec<Stmt> = vec![];
 
-        while *self.peek() != Token::StopTag && *self.peek() != Token::End {
+        self.accept(Token::Begin);
+        while *self.peek() != Token::End {
             statements.push(self.parse_statement());
         }
+        self.accept(Token::End);
 
         return CompoundStmt { statements };
     }
-}
 
+    fn parse_func_def(&mut self) -> FuncDef {
+        let ret_type = self.parse_type();
+        let name = self.parse_identifier();
+        self.accept(Token::LP);
+
+        let mut params: Vec<Param> = vec![];
+        while *self.peek() != Token::RP {
+            let ptype = self.parse_type();
+            let name = self.parse_identifier();
+            params.push(Param { ptype, name });
+        }
+        self.accept(Token::RP);
+
+        let body = self.parse_compound_statement();
+        return FuncDef { ret_type, name, params, body};
+    }
+
+    fn parse_ext_decl(&mut self) -> ExtDecl {
+        return ExtDecl::FuncDef(self.parse_func_def());
+    }
+
+    fn parse_translation_unit(&mut self) -> TranslationUnit {
+        let mut functions: HashMap<String, FuncDef> = HashMap::new();
+
+        while *self.peek() != Token::StopTag {
+            match self.parse_ext_decl() {
+                ExtDecl::FuncDef(f) => {
+                    if functions.contains_key(&f.name) {
+                        panic!("Function {} already declared", f.name);
+                    }
+
+                    functions.insert(f.name.clone(), f);
+                }
+            };
+        }
+
+        return TranslationUnit { functions };
+    }
+}
 
 pub fn parse_expr(all_tokens: Vec<Token>) -> Expr {
     let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
@@ -238,6 +280,16 @@ pub fn parse_compound_stmt(all_tokens: Vec<Token>) -> CompoundStmt {
     let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
 
     let res = parser.parse_compound_statement();
+    if *parser.peek() != Token::StopTag {
+        panic!("Unexpected tokens remaining");
+    }
+    return res;
+}
+
+pub fn parse_translation_unit(all_tokens: Vec<Token>) -> TranslationUnit {
+    let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
+
+    let res = parser.parse_translation_unit();
     if *parser.peek() != Token::StopTag {
         panic!("Unexpected tokens remaining");
     }
