@@ -29,6 +29,7 @@ pub enum Token {
     If,
     Else,
     Comma,
+    Return,
 }
 
 struct Parser {
@@ -226,6 +227,10 @@ impl Parser {
                 self.take();
                 return Stmt::Empty;
             }
+            Token::Return => {
+                self.take();
+                return Stmt::Return(self.parse_expr());
+            }
             _ => {
                 let ret = Stmt::Expr(self.parse_expr());
                 self.accept(Token::Sem);
@@ -329,12 +334,15 @@ pub fn tokenize(text: &str) -> Vec<Token> {
         let m_str = m.as_str();
 
         match m_str.chars().next().unwrap() {
+            // TODO refactor for not needing to call res.push() every time
             'A'..='Z' | 'a'..='z' | '_' => {
                 match m_str {
+                    // TODO: clean up with keywords table
                     "int" => res.push(Token::Type(Type::Int)),
                     "while" => res.push(Token::While),
                     "if" => res.push(Token::If),
                     "else" => res.push(Token::Else),
+                    "return" => res.push(Token::Return),
                     _ => res.push(Token::Identifier(m_str.parse().unwrap()))
                 }
             }

@@ -19,21 +19,21 @@ fn main() {
                 b = b - a;
             }
         }
-        a;
+        return a;
     }
 
     int fac(int i) {
         if(i > 1) {
-          i * fac(i-1);
-        } else {
-          1;
+          return i * fac(i-1);
         }
+
+        return 1;
     }
 
     int main()
     {
        gcd(1071, 462);
-       fac(5);
+       return fac(5);
     }
     ");
 
@@ -42,6 +42,6 @@ fn main() {
 
 
     let mut interp = Interpreter::new(trans_unit);
-    let value = interp.visit_function_call("main", &vec![]);
+    let value = interp.visit_function_call("main", &vec![]).unwrap();
     println!("Result: {}", value);
 }

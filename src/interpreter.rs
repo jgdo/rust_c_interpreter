@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::f32::consts::E;
 use std::rc::Rc;
 use crate::ast::*;
 
@@ -84,83 +85,86 @@ impl Interpreter {
     }
 }
 
-impl Visitor<i32> for Interpreter {
-    fn visit_literal(&mut self, e: &Literal) -> i32 {
-        return e.value;
+impl Visitor<i32, i32> for Interpreter {
+    fn visit_literal(&mut self, e: &Literal) -> Result<i32, i32> {
+        return Ok(e.value);
     }
 
-    fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> i32 {
+    fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<i32, i32> {
         match op {
-            Operator::Plus => self.visit_expr(&lhs) + self.visit_expr(&rhs),
-            Operator::Minus => self.visit_expr(lhs) - self.visit_expr(rhs),
-            Operator::Times => self.visit_expr(lhs) * self.visit_expr(rhs),
-            Operator::Div => self.visit_expr(lhs) / self.visit_expr(rhs),
+            Operator::Plus => Ok(self.visit_expr(&lhs)? + self.visit_expr(&rhs)?),
+            Operator::Minus => Ok(self.visit_expr(lhs)? - self.visit_expr(rhs)?),
+            Operator::Times => Ok(self.visit_expr(lhs)? * self.visit_expr(rhs)?),
+            Operator::Div => Ok(self.visit_expr(lhs)? / self.visit_expr(rhs)?),
             Operator::Eq => {
                 match lhs {
                     Expr::Variable(ref var) => {
-                        let value = self.visit_expr(rhs);
+                        let value = self.visit_expr(rhs)?;
                         self.variables.set_variable(&var.name, value);
-                        return value;
+                        return Ok(value);
                     }
                     _ => panic!("Cannot assign value to expression")
                 }
             }
-            Operator::Neq => if self.visit_expr(lhs) != self.visit_expr(rhs) { 1 } else { 0 },
-            Operator::Greater => if self.visit_expr(lhs) > self.visit_expr(rhs) { 1 } else { 0 },
+            Operator::Neq => if self.visit_expr(lhs) != self.visit_expr(rhs) { Ok(1) } else { Ok(0) },
+            Operator::Greater => if self.visit_expr(lhs) > self.visit_expr(rhs) { Ok(1) } else { Ok(0) },
         }
     }
 
-    fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> i32 {
-        let value = opt_init.as_ref().map_or(0, |expr| self.visit_expr(&expr));
+    fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<i32, i32> {
+        let value = opt_init.as_ref().map_or(0, |expr| self.visit_expr(&expr).unwrap());
         self.variables.add_variable(name.clone(), value);
-        return value;
+        return Ok(value);
     }
 
-    fn visit_var(&mut self, var: &Variable) -> i32 {
-        return *self.variables.lookup_value(&var.name);
+    fn visit_var(&mut self, var: &Variable) -> Result<i32, i32> {
+        return Ok(*self.variables.lookup_value(&var.name));
     }
 
-    fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> i32 {
-        while self.visit_expr(cond) != 0 {
+    fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> Result<i32, i32> {
+        while self.visit_expr(cond)? != 0 {
             self.visit_statement(body);
         }
 
-        return 0; // TODO this is actually a hack
+        return Ok(0); // TODO this is actually a hack
     }
 
-    fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> i32 {
-        if self.visit_expr(cond) != 0 {
-            self.visit_statement(body_if)
+    fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<i32, i32> {
+        if self.visit_expr(cond).unwrap() != 0 {
+            self.visit_statement(body_if)?;
+            Ok(0) // TODO this is actually a hack
         } else {
-            opt_body_else.as_ref().map_or(0, |body_else| { // TODO this is actually a hack
+            opt_body_else.as_ref().map_or(Ok(0), |body_else| {
                 self.visit_statement(&*body_else)
             })
         }
     }
 
-    fn visit_empty(&mut self) -> i32 {
-        return 0; // TODO this is actually a hack
+    fn visit_empty(&mut self) -> Result<i32, i32> {
+        return Ok(0); // TODO this is actually a hack
     }
 
-    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, i32>) -> i32 {
+    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, i32>) -> Result<i32, i32> {
         self.variables.push_scope();
 
         for (name, value) in variables {
             self.variables.add_variable(name.clone(), *value);
         }
 
-        let (last, first) = compound.statements.split_last().unwrap();
+        let mut func = || -> Result<i32, i32> {
+            for stmt in &compound.statements {
+                self.visit_statement(stmt)?;
+            }
 
-        for stmt in first {
-            self.visit_statement(stmt);
-        }
-        let result = self.visit_statement(last);
+            Ok(0)  // hack
+        };
 
+        let result = func();
         self.variables.pop_scope();
         return result;
     }
 
-    fn visit_function_call(&mut self, name: &str, args: &Vec<i32>) -> i32 {
+    fn visit_function_call(&mut self, name: &str, args: &Vec<i32>) -> Result<i32, i32> {
         let translation_unit = Rc::clone(&self.translation_unit);
         let func = translation_unit.functions.get(name).unwrap();
 
@@ -179,7 +183,14 @@ impl Visitor<i32> for Interpreter {
         self.variables.pop_scope();
         self.variables.pop_layer();
 
-        return result;
+        match result {
+            Ok(_) => panic!("A call to {} did not return a value", name),
+            Err(r) => Ok(r)
+        }
+    }
+
+    fn visit_return(&mut self, expr: &Expr) -> Result<i32, i32> {
+        return Err(self.visit_expr(expr).unwrap());
     }
 }
 
@@ -193,7 +204,7 @@ mod tests {
     fn visit_literal() {
         let mut interpreter = Interpreter::empty();
         let expr = Expr::Literal(Literal { value: 42 });
-        assert_eq!(interpreter.visit_expr(&expr), 42);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 42);
     }
 
     #[test]
@@ -202,7 +213,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Plus);
-        assert_eq!(interpreter.visit_expr(&expr), 8);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 8);
     }
 
     #[test]
@@ -211,7 +222,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Minus);
-        assert_eq!(interpreter.visit_expr(&expr), -2);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), -2);
     }
 
     #[test]
@@ -220,7 +231,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Times);
-        assert_eq!(interpreter.visit_expr(&expr), 15);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 15);
     }
 
     #[test]
@@ -229,7 +240,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 39 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Div);
-        assert_eq!(interpreter.visit_expr(&expr), 7);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 7);
     }
 
     #[test]
@@ -240,7 +251,7 @@ mod tests {
         let mut interp = Interpreter::empty();
         let result = interp.visit_expr(&expr);
 
-        assert_eq!(result, -6);
+        assert_eq!(result.unwrap(), -6);
     }
 }
 
