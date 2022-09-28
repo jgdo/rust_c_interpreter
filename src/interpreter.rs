@@ -1,27 +1,44 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 use crate::ast::*;
 
 struct VariableMemory {
-    // TODO this is actually false, we need a global set of variables, and a stack of variable sets for function calls
-    variables_set: Vec<HashMap<String, i32>>,
+    globals: HashMap<String, i32>,
+    // each top entry represent variables from inside a function call layer
+    // each entry inside a function layer represents the scope inside the function
+    variables_set: Vec<Vec<HashMap<String, i32>>>,
 }
 
 impl VariableMemory {
     pub fn new() -> VariableMemory {
-        return VariableMemory { variables_set: Vec::new() };
+        return VariableMemory { globals: HashMap::new(), variables_set: Vec::new() };
     }
 
-    fn top_scope(&mut self) -> &mut HashMap<String, i32> {
+    pub fn push_layer(&mut self) {
+        self.variables_set.push(Vec::new());
+    }
+
+    pub fn pop_layer(&mut self) {
+        assert_eq!(self.top_layer().len(), 0, "Expected to have no open scopes left for popping layer");
+        self.variables_set.pop().unwrap();
+    }
+
+    pub fn top_layer(&mut self) -> &mut Vec<HashMap<String, i32>> {
         return self.variables_set.last_mut().unwrap();
     }
 
+    fn top_scope(&mut self) -> &mut HashMap<String, i32> {
+        return self.top_layer().last_mut().unwrap();
+    }
+
     pub fn push_scope(&mut self) {
-        self.variables_set.push(HashMap::new());
+        self.top_layer().push(HashMap::new());
     }
 
     pub fn pop_scope(&mut self) {
-        self.variables_set.pop().unwrap();
+        self.top_layer().pop().unwrap();
     }
+
 
     pub fn add_variable(&mut self, name: String, value: i32) {
         let mut scope = self.top_scope();
@@ -39,7 +56,9 @@ impl VariableMemory {
     }
 
     pub fn lookup_value(&mut self, name: &String) -> &mut i32 {
-        for set in self.variables_set.iter_mut() {
+        let top_layer = self.top_layer();
+
+        for set in top_layer.iter_mut() {
             let val = set.get_mut(name);
             if val.is_some() {
                 return val.unwrap();
@@ -52,11 +71,16 @@ impl VariableMemory {
 
 pub struct Interpreter {
     variables: VariableMemory,
+    translation_unit: Rc<TranslationUnit>,
 }
 
 impl Interpreter {
-    pub(crate) fn new() -> Interpreter {
-        Interpreter { variables: VariableMemory::new() }
+    pub fn new(unit: TranslationUnit) -> Interpreter {
+        Interpreter { variables: VariableMemory::new(), translation_unit: Rc::new(unit) }
+    }
+
+    pub fn empty() -> Interpreter {
+        Interpreter { variables: VariableMemory::new(), translation_unit: Rc::new(TranslationUnit::new()) }
     }
 }
 
@@ -136,18 +160,24 @@ impl Visitor<i32> for Interpreter {
         return result;
     }
 
-    fn visit_function_call(&mut self, unit: &TranslationUnit, name: &str, args: &Vec<i32>) -> i32 {
-        let func = unit.functions.get(name).unwrap();
-        assert_eq!(args.len(), func.params.len());
+    fn visit_function_call(&mut self, name: &str, args: &Vec<i32>) -> i32 {
+        let translation_unit = Rc::clone(&self.translation_unit);
+        let func = translation_unit.functions.get(name).unwrap();
+
+        if args.len() != func.params.len() {
+            panic!("Function '{}' is called with {} arguments, while declared with {}", name, args.len(), func.params.len());
+        }
 
         let mut variables: HashMap<String, i32> = HashMap::new();
 
+        self.variables.push_layer();
         self.variables.push_scope();
         for idx in 0..args.len() {
             variables.insert(func.params.get(idx).unwrap().name.clone(), *args.get(idx).unwrap());
         }
         let result = self.visit_compound_statement(&func.body, &variables);
         self.variables.pop_scope();
+        self.variables.pop_layer();
 
         return result;
     }
@@ -161,14 +191,14 @@ mod tests {
 
     #[test]
     fn visit_literal() {
-        let mut interpreter = Interpreter::new();
+        let mut interpreter = Interpreter::empty();
         let expr = Expr::Literal(Literal { value: 42 });
         assert_eq!(interpreter.visit_expr(&expr), 42);
     }
 
     #[test]
     fn visit_binary_plus() {
-        let mut interpreter = Interpreter::new();
+        let mut interpreter = Interpreter::empty();
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Plus);
@@ -177,7 +207,7 @@ mod tests {
 
     #[test]
     fn visit_binary_minux() {
-        let mut interpreter = Interpreter::new();
+        let mut interpreter = Interpreter::empty();
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Minus);
@@ -186,7 +216,7 @@ mod tests {
 
     #[test]
     fn visit_binary_times() {
-        let mut interpreter = Interpreter::new();
+        let mut interpreter = Interpreter::empty();
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Times);
@@ -195,7 +225,7 @@ mod tests {
 
     #[test]
     fn visit_binary_div() {
-        let mut interpreter = Interpreter::new();
+        let mut interpreter = Interpreter::empty();
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 39 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Div);
@@ -207,7 +237,7 @@ mod tests {
         let tokens = parser::tokenize("(5+3)-(2)*7");
         let expr = parser::parse_expr(tokens);
 
-        let mut interp = Interpreter::new();
+        let mut interp = Interpreter::empty();
         let result = interp.visit_expr(&expr);
 
         assert_eq!(result, -6);

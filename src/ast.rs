@@ -26,6 +26,7 @@ pub enum Expr {
     Variable(Variable),
     Literal(Literal),
     BinaryExpr(Box<Expr>, Box<Expr>, Operator),
+    FuncCall(String, Vec<Expr>),
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -72,6 +73,12 @@ pub struct TranslationUnit {
     pub functions: HashMap<String, FuncDef>,
 }
 
+impl TranslationUnit {
+    pub fn new() -> TranslationUnit {
+        TranslationUnit { functions: HashMap::new() }
+    }
+}
+
 pub trait Visitor<R> {
     fn visit_literal(&mut self, e: &Literal) -> R;
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> R;
@@ -80,7 +87,7 @@ pub trait Visitor<R> {
     fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> R;
     fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> R;
     fn visit_empty(&mut self) -> R;
-    fn visit_function_call(&mut self, unit: &TranslationUnit, name: &str, args: &Vec<R>) -> R;
+    fn visit_function_call(&mut self, name: &str, args: &Vec<R>) -> R;
     fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, i32>) -> R;
 
     fn visit_expr(&mut self, e: &Expr) -> R {
@@ -88,6 +95,10 @@ pub trait Visitor<R> {
             Expr::Literal(ref lit) => self.visit_literal(lit),
             Expr::BinaryExpr(ref lhs, ref rhs, ref op) => self.visit_binary_exp(lhs, rhs, op),
             Expr::Variable(ref var) => self.visit_var(var),
+            Expr::FuncCall(ref name, ref args) => {
+                let args_values = &args.iter().map(|e| self.visit_expr(e)).collect();
+                self.visit_function_call(name, args_values)
+            }
         }
     }
 

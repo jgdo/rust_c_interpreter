@@ -5,7 +5,6 @@ use crate::ast;
 use ast::Operator;
 use crate::ast::{CompoundStmt, Expr, ExtDecl, FuncDef, Param, Stmt, TranslationUnit, Type, Variable};
 use crate::ast::Operator::{Div, Eq, Greater, Minus, Neq, Plus, Times};
-use crate::ast::Stmt::Empty;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Literal {
@@ -29,6 +28,7 @@ pub enum Token {
     // }
     If,
     Else,
+    Comma,
 }
 
 struct Parser {
@@ -67,7 +67,7 @@ impl Parser {
     fn accept(&mut self, expected: Token) {
         let actual = self.take();
         if expected != *actual {
-            panic!("Expected token did not match actual token")
+            panic!("Expected {:?}, found {:?}", expected, actual)
         }
     }
 
@@ -79,7 +79,27 @@ impl Parser {
                 self.accept(Token::RP);
                 return expr;
             }
-            Token::Identifier(ref name) => Expr::Variable(Variable { name: name.clone() }),
+            Token::Identifier(ref name) => {
+                let name = name.clone();
+                match *self.peek() {
+                    Token::LP => {
+                        self.take();
+
+                        let mut args: Vec<Expr> = vec![];
+                        while *self.peek() != Token::RP {
+                            args.push(self.parse_expr());
+                            if *self.peek() == Token::Comma {
+                                self.take();
+                            }
+                        }
+
+                        self.accept(Token::RP);
+
+                        Expr::FuncCall(name, args)
+                    }
+                    _ => Expr::Variable(Variable { name })
+                }
+            }
             _ => panic!("Unexpected Token")
         }
     }
@@ -204,7 +224,7 @@ impl Parser {
             Token::Begin => Stmt::Compound(Box::new(self.parse_compound_statement())),
             Token::Sem => {
                 self.take();
-                return Empty;
+                return Stmt::Empty;
             }
             _ => {
                 let ret = Stmt::Expr(self.parse_expr());
@@ -236,11 +256,15 @@ impl Parser {
             let ptype = self.parse_type();
             let name = self.parse_identifier();
             params.push(Param { ptype, name });
+
+            if *self.peek() == Token::Comma {
+                self.take();
+            }
         }
         self.accept(Token::RP);
 
         let body = self.parse_compound_statement();
-        return FuncDef { ret_type, name, params, body};
+        return FuncDef { ret_type, name, params, body };
     }
 
     fn parse_ext_decl(&mut self) -> ExtDecl {
@@ -298,7 +322,7 @@ pub fn parse_translation_unit(all_tokens: Vec<Token>) -> TranslationUnit {
 
 pub fn tokenize(text: &str) -> Vec<Token> {
     // TODO this will actually match more than it should, fix eventually
-    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>").unwrap();
+    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,").unwrap();
 
     let mut res: Vec<Token> = vec![];
     for m in re.find_iter(text) {
@@ -327,6 +351,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
             '!' => res.push(Token::Operator(Neq)), // TODO will match more
             '>' => res.push(Token::Operator(Greater)),
             ';' => res.push(Token::Sem),
+            ',' => res.push(Token::Comma),
             _ => { panic!("cannot tokenize '{}'", m_str) }
         }
     }
