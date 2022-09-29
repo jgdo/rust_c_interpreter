@@ -90,7 +90,7 @@ pub trait Visitor<R, E> where E: Debug {
     fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<R, E>;
     fn visit_empty(&mut self) -> Result<R, E>;
     fn visit_function_call(&mut self, name: &str, args: &Vec<R>) -> Result<R, E>;
-    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, i32>) -> Result<R, E>;
+    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, R>) -> Result<R, E>;
     fn visit_return(&mut self, expr: &Expr) -> Result<R, E>;
 
     fn visit_expr(&mut self, e: &Expr) -> Result<R, E> {

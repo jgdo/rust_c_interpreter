@@ -45,5 +45,5 @@ fn main() {
 
     let mut interp = Interpreter::new(trans_unit);
     let value = interp.visit_function_call("main", &vec![]).unwrap();
-    println!("Result: {}", value);
+    println!("Result: {:?}", value);
 }

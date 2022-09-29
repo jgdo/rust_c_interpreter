@@ -3,11 +3,16 @@ use std::f32::consts::E;
 use std::rc::Rc;
 use crate::ast::*;
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum TypedValue {
+    Int(i32),
+}
+
 struct VariableMemory {
-    globals: HashMap<String, i32>,
+    globals: HashMap<String, TypedValue>,
     // each top entry represent variables from inside a function call layer
     // each entry inside a function layer represents the scope inside the function
-    variables_set: Vec<Vec<HashMap<String, i32>>>,
+    variables_set: Vec<Vec<HashMap<String, TypedValue>>>,
 }
 
 impl VariableMemory {
@@ -24,11 +29,11 @@ impl VariableMemory {
         self.variables_set.pop().unwrap();
     }
 
-    pub fn top_layer(&mut self) -> &mut Vec<HashMap<String, i32>> {
+    pub fn top_layer(&mut self) -> &mut Vec<HashMap<String, TypedValue>> {
         return self.variables_set.last_mut().unwrap();
     }
 
-    fn top_scope(&mut self) -> &mut HashMap<String, i32> {
+    fn top_scope(&mut self) -> &mut HashMap<String, TypedValue> {
         return self.top_layer().last_mut().unwrap();
     }
 
@@ -41,7 +46,7 @@ impl VariableMemory {
     }
 
 
-    pub fn add_variable(&mut self, name: String, value: i32) {
+    pub fn add_variable(&mut self, name: String, value: TypedValue) {
         let mut scope = self.top_scope();
 
         if scope.contains_key(&*name) {
@@ -51,12 +56,12 @@ impl VariableMemory {
         scope.insert(name.clone(), value);
     }
 
-    pub fn set_variable(&mut self, name: &String, value: i32) {
+    pub fn set_variable(&mut self, name: &String, value: TypedValue) {
         let mut var = self.lookup_value(name);
         *var = value;
     }
 
-    pub fn lookup_value(&mut self, name: &String) -> &mut i32 {
+    pub fn lookup_value(&mut self, name: &String) -> &mut TypedValue {
         let top_layer = self.top_layer();
 
         for set in top_layer.iter_mut() {
@@ -75,6 +80,20 @@ pub struct Interpreter {
     translation_unit: Rc<TranslationUnit>,
 }
 
+macro_rules! enum_cast {
+    ($target: expr, $pat: path) => {
+        {
+            if let $pat(a) = $target { // #1
+                a
+            } else {
+                panic!(
+                    "mismatch variant when cast to {}",
+                    stringify!($pat)); // #2
+            }
+        }
+    };
+}
+
 impl Interpreter {
     pub fn new(unit: TranslationUnit) -> Interpreter {
         Interpreter { variables: VariableMemory::new(), translation_unit: Rc::new(unit) }
@@ -83,80 +102,130 @@ impl Interpreter {
     pub fn empty() -> Interpreter {
         Interpreter { variables: VariableMemory::new(), translation_unit: Rc::new(TranslationUnit::new()) }
     }
-}
 
-impl Visitor<i32, i32> for Interpreter {
-    fn visit_literal(&mut self, e: &Literal) -> Result<i32, i32> {
-        return Ok(e.value);
+    fn promote_operands(&mut self, lhs: TypedValue, rhs: TypedValue) -> (TypedValue, TypedValue) {
+        return (lhs, rhs);
     }
 
-    fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<i32, i32> {
-        match op {
-            Operator::Plus => Ok(self.visit_expr(&lhs)? + self.visit_expr(&rhs)?),
-            Operator::Minus => Ok(self.visit_expr(lhs)? - self.visit_expr(rhs)?),
-            Operator::Times => Ok(self.visit_expr(lhs)? * self.visit_expr(rhs)?),
-            Operator::Div => Ok(self.visit_expr(lhs)? / self.visit_expr(rhs)?),
-            Operator::Eq => {
-                match lhs {
-                    Expr::Variable(ref var) => {
-                        let value = self.visit_expr(rhs)?;
-                        self.variables.set_variable(&var.name, value);
-                        return Ok(value);
-                    }
-                    _ => panic!("Cannot assign value to expression")
-                }
-            }
-            Operator::Neq => if self.visit_expr(lhs) != self.visit_expr(rhs) { Ok(1) } else { Ok(0) },
-            Operator::Greater => if self.visit_expr(lhs) > self.visit_expr(rhs) { Ok(1) } else { Ok(0) },
+    fn op_add(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
+        match lhs {
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs + enum_cast!(rhs, TypedValue::Int)) }
         }
     }
 
-    fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<i32, i32> {
-        let value = opt_init.as_ref().map_or(0, |expr| self.visit_expr(&expr).unwrap());
+    fn op_sub(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
+        match lhs {
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs - enum_cast!(rhs, TypedValue::Int)) }
+        }
+    }
+
+    fn op_mul(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
+        match lhs {
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs * enum_cast!(rhs, TypedValue::Int)) }
+        }
+    }
+
+    fn op_div(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
+        match lhs {
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs / enum_cast!(rhs, TypedValue::Int)) }
+        }
+    }
+
+    fn op_neq(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
+        match lhs {
+            TypedValue::Int(lhs) => { TypedValue::Int(if lhs != enum_cast!(rhs, TypedValue::Int) { 1 } else { 0 }) }
+        }
+    }
+
+    fn op_gt(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
+        match lhs {
+            TypedValue::Int(lhs) => { TypedValue::Int(if lhs > enum_cast!(rhs, TypedValue::Int) { 1 } else { 0 }) }
+        }
+    }
+
+    fn cast_value<T>(&mut self, value: TypedValue) -> TypedValue {
+        value
+    }
+}
+
+impl Visitor<TypedValue, TypedValue> for Interpreter {
+    fn visit_literal(&mut self, e: &Literal) -> Result<TypedValue, TypedValue> {
+        return Ok(TypedValue::Int(e.value));
+    }
+
+    fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<TypedValue, TypedValue> {
+        if *op == Operator::Eq {
+            match lhs {
+                Expr::Variable(ref var) => {
+                    let value = self.visit_expr(rhs)?;
+                    self.variables.set_variable(&var.name, value);
+                    return Ok(value);
+                }
+                _ => panic!("Cannot assign value to expression")
+            }
+        } else {
+            let lhs = self.visit_expr(lhs)?;
+            let rhs = self.visit_expr(rhs)?;
+            let (lhs, rhs) = self.promote_operands(lhs, rhs);
+
+            match op {
+                Operator::Plus => Ok(self.op_add(lhs, rhs)),
+                Operator::Minus => Ok(self.op_sub(lhs, rhs)),
+                Operator::Times => Ok(self.op_mul(lhs, rhs)),
+                Operator::Div => Ok(self.op_div(lhs, rhs)),
+                Operator::Neq => Ok(self.op_neq(lhs, rhs)),
+                Operator::Greater => Ok(self.op_gt(lhs, rhs)),
+                _ => panic!("Unsupported op {:?}", *op),
+            }
+        }
+    }
+
+    fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<TypedValue, TypedValue> {
+        let value = opt_init.as_ref().map_or(TypedValue::Int(0), |expr| self.visit_expr(&expr).unwrap());
         self.variables.add_variable(name.clone(), value);
         return Ok(value);
     }
 
-    fn visit_var(&mut self, var: &Variable) -> Result<i32, i32> {
+    fn visit_var(&mut self, var: &Variable) -> Result<TypedValue, TypedValue> {
         return Ok(*self.variables.lookup_value(&var.name));
     }
 
-    fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> Result<i32, i32> {
-        while self.visit_expr(cond)? != 0 {
+    fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> Result<TypedValue, TypedValue> {
+        while enum_cast!(self.visit_expr(cond)?, TypedValue::Int) != 0 {
             self.visit_statement(body);
         }
 
-        return Ok(0); // TODO this is actually a hack
+        return Ok(TypedValue::Int(0)); // TODO this is actually a hack
     }
 
-    fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<i32, i32> {
-        if self.visit_expr(cond).unwrap() != 0 {
+    fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<TypedValue, TypedValue> {
+        if enum_cast!(self.visit_expr(cond).unwrap(), TypedValue::Int) != 0 {
             self.visit_statement(body_if)?;
-            Ok(0) // TODO this is actually a hack
+            Ok(TypedValue::Int(0)) // TODO this is actually a hack
         } else {
-            opt_body_else.as_ref().map_or(Ok(0), |body_else| {
+            opt_body_else.as_ref().map_or(Ok(TypedValue::Int(0)), |body_else| {
                 self.visit_statement(&*body_else)
             })
         }
     }
 
-    fn visit_empty(&mut self) -> Result<i32, i32> {
-        return Ok(0); // TODO this is actually a hack
+    fn visit_empty(&mut self) -> Result<TypedValue, TypedValue> {
+        return Ok(TypedValue::Int(0)); // TODO this is actually a hack
     }
 
-    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, i32>) -> Result<i32, i32> {
+    fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, TypedValue>) -> Result<TypedValue, TypedValue> {
         self.variables.push_scope();
 
         for (name, value) in variables {
             self.variables.add_variable(name.clone(), *value);
         }
 
-        let mut func = || -> Result<i32, i32> {
+        let mut func = || -> Result<TypedValue, TypedValue> {
             for stmt in &compound.statements {
                 self.visit_statement(stmt)?;
             }
 
-            Ok(0)  // hack
+            Ok(TypedValue::Int(0))  // hack
         };
 
         let result = func();
@@ -164,14 +233,14 @@ impl Visitor<i32, i32> for Interpreter {
         return result;
     }
 
-    fn visit_function_call(&mut self, name: &str, args: &Vec<i32>) -> Result<i32, i32> {
-        if name == "print"{
+    fn visit_function_call(&mut self, name: &str, args: &Vec<TypedValue>) -> Result<TypedValue, TypedValue> {
+        if name == "print" {
             for value in args.iter() {
-                print!("{} ", *value);
+                print!("{} ", enum_cast!(value, TypedValue::Int));
             }
             println!();
 
-            return Ok(0)
+            return Ok(TypedValue::Int(0));
         }
 
 
@@ -182,7 +251,7 @@ impl Visitor<i32, i32> for Interpreter {
             panic!("Function '{}' is called with {} arguments, while declared with {}", name, args.len(), func.params.len());
         }
 
-        let mut variables: HashMap<String, i32> = HashMap::new();
+        let mut variables: HashMap<String, TypedValue> = HashMap::new();
 
         self.variables.push_layer();
         self.variables.push_scope();
@@ -199,7 +268,7 @@ impl Visitor<i32, i32> for Interpreter {
         }
     }
 
-    fn visit_return(&mut self, expr: &Expr) -> Result<i32, i32> {
+    fn visit_return(&mut self, expr: &Expr) -> Result<TypedValue, TypedValue> {
         return Err(self.visit_expr(expr).unwrap());
     }
 }
@@ -214,7 +283,7 @@ mod tests {
     fn visit_literal() {
         let mut interpreter = Interpreter::empty();
         let expr = Expr::Literal(Literal { value: 42 });
-        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 42);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(42));
     }
 
     #[test]
@@ -223,7 +292,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Plus);
-        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 8);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(8));
     }
 
     #[test]
@@ -232,7 +301,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Minus);
-        assert_eq!(interpreter.visit_expr(&expr).unwrap(), -2);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(-2));
     }
 
     #[test]
@@ -241,7 +310,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Times);
-        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 15);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(15));
     }
 
     #[test]
@@ -250,7 +319,7 @@ mod tests {
         let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 39 })),
                                     Box::new(Expr::Literal(Literal { value: 5 })),
                                     Operator::Div);
-        assert_eq!(interpreter.visit_expr(&expr).unwrap(), 7);
+        assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(7));
     }
 
     #[test]
@@ -261,7 +330,7 @@ mod tests {
         let mut interp = Interpreter::empty();
         let result = interp.visit_expr(&expr);
 
-        assert_eq!(result.unwrap(), -6);
+        assert_eq!(result.unwrap(), TypedValue::Int(-6));
     }
 }
 
