@@ -165,6 +165,16 @@ impl Visitor<i32, i32> for Interpreter {
     }
 
     fn visit_function_call(&mut self, name: &str, args: &Vec<i32>) -> Result<i32, i32> {
+        if name == "print"{
+            for value in args.iter() {
+                print!("{} ", *value);
+            }
+            println!();
+
+            return Ok(0)
+        }
+
+
         let translation_unit = Rc::clone(&self.translation_unit);
         let func = translation_unit.functions.get(name).unwrap();
 

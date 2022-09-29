@@ -19,6 +19,8 @@ fn main() {
                 b = b - a;
             }
         }
+
+        print(a);
         return a;
     }
 
