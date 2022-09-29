@@ -13,8 +13,9 @@ pub enum Operator {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-pub struct Literal {
-    pub value: i32,
+pub enum Literal {
+    Int(i32),
+    Void,
 }
 
 #[derive(PartialEq, Debug)]
@@ -33,6 +34,7 @@ pub enum Expr {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Type {
     Int,
+    Void,
 }
 
 #[derive(PartialEq, Debug)]

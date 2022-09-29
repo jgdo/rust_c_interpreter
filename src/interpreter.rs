@@ -1,11 +1,14 @@
 use std::collections::HashMap;
-use std::f32::consts::E;
 use std::rc::Rc;
 use crate::ast::*;
 
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum TypedValue {
-    Int(i32),
+type TypedValue = Literal;
+
+fn typeof_value(value: &TypedValue) -> Type {
+    match value {
+        TypedValue::Int(_) => Type::Int,
+        TypedValue::Void => Type::Void,
+    }
 }
 
 struct VariableMemory {
@@ -47,7 +50,7 @@ impl VariableMemory {
 
 
     pub fn add_variable(&mut self, name: String, value: TypedValue) {
-        let mut scope = self.top_scope();
+        let scope = self.top_scope();
 
         if scope.contains_key(&*name) {
             panic!("Variable {} already declared", name);
@@ -57,11 +60,11 @@ impl VariableMemory {
     }
 
     pub fn set_variable(&mut self, name: &String, value: TypedValue) {
-        let mut var = self.lookup_value(name);
+        let var = self.lookup_value(name);
         *var = value;
     }
 
-    pub fn lookup_value(&mut self, name: &String) -> &mut TypedValue {
+    pub fn lookup_value(&mut self, name: &String) ->  &mut TypedValue {
         let top_layer = self.top_layer();
 
         for set in top_layer.iter_mut() {
@@ -71,7 +74,9 @@ impl VariableMemory {
             }
         }
 
-        panic!("Variable {} not found", name);
+        // TODO check whats wrong
+        // return self.globals.get_mut(name).unwrap();
+        panic!("Cannot find variable {}", name);
     }
 }
 
@@ -85,6 +90,20 @@ macro_rules! enum_cast {
         {
             if let $pat(a) = $target { // #1
                 a
+            } else {
+                panic!(
+                    "mismatch variant when cast to {}",
+                    stringify!($pat)); // #2
+            }
+        }
+    };
+}
+
+macro_rules! enum_check {
+    ($target: expr, $pat: path) => {
+        {
+            if let $pat(_) = $target { // #1
+                $target
             } else {
                 panic!(
                     "mismatch variant when cast to {}",
@@ -109,48 +128,50 @@ impl Interpreter {
 
     fn op_add(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
         match lhs {
-            TypedValue::Int(lhs) => { TypedValue::Int(lhs + enum_cast!(rhs, TypedValue::Int)) }
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs + enum_cast!(rhs, TypedValue::Int)) },
+            _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
     fn op_sub(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
         match lhs {
-            TypedValue::Int(lhs) => { TypedValue::Int(lhs - enum_cast!(rhs, TypedValue::Int)) }
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs - enum_cast!(rhs, TypedValue::Int)) },
+            _ => panic!("Cannot apply sub on {:?}, {:?}", lhs, rhs)
         }
     }
 
     fn op_mul(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
         match lhs {
-            TypedValue::Int(lhs) => { TypedValue::Int(lhs * enum_cast!(rhs, TypedValue::Int)) }
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs * enum_cast!(rhs, TypedValue::Int)) },
+            _ => panic!("Cannot apply mul on {:?}, {:?}", lhs, rhs)
         }
     }
 
     fn op_div(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
         match lhs {
-            TypedValue::Int(lhs) => { TypedValue::Int(lhs / enum_cast!(rhs, TypedValue::Int)) }
+            TypedValue::Int(lhs) => { TypedValue::Int(lhs / enum_cast!(rhs, TypedValue::Int)) },
+            _ => panic!("Cannot apply div on {:?}, {:?}", lhs, rhs)
         }
     }
 
     fn op_neq(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
         match lhs {
-            TypedValue::Int(lhs) => { TypedValue::Int(if lhs != enum_cast!(rhs, TypedValue::Int) { 1 } else { 0 }) }
+            TypedValue::Int(lhs) => { TypedValue::Int(if lhs != enum_cast!(rhs, TypedValue::Int) { 1 } else { 0 }) },
+            _ => panic!("Cannot apply new on {:?}, {:?}", lhs, rhs)
         }
     }
 
     fn op_gt(&mut self, lhs: TypedValue, rhs: TypedValue) -> TypedValue {
         match lhs {
-            TypedValue::Int(lhs) => { TypedValue::Int(if lhs > enum_cast!(rhs, TypedValue::Int) { 1 } else { 0 }) }
+            TypedValue::Int(lhs) => { TypedValue::Int(if lhs > enum_cast!(rhs, TypedValue::Int) { 1 } else { 0 }) },
+            _ => panic!("Cannot apply gt on {:?}, {:?}", lhs, rhs)
         }
-    }
-
-    fn cast_value<T>(&mut self, value: TypedValue) -> TypedValue {
-        value
     }
 }
 
 impl Visitor<TypedValue, TypedValue> for Interpreter {
     fn visit_literal(&mut self, e: &Literal) -> Result<TypedValue, TypedValue> {
-        return Ok(TypedValue::Int(e.value));
+        return Ok(*e);
     }
 
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<TypedValue, TypedValue> {
@@ -181,7 +202,11 @@ impl Visitor<TypedValue, TypedValue> for Interpreter {
     }
 
     fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<TypedValue, TypedValue> {
-        let value = opt_init.as_ref().map_or(TypedValue::Int(0), |expr| self.visit_expr(&expr).unwrap());
+        let value = match t {
+            Type::Int => opt_init.as_ref().map_or(TypedValue::Int(0), |expr| enum_check!(self.visit_expr(&expr).unwrap(), TypedValue::Int)),
+            Type::Void => panic!("Cannot declare variable {} with type void.", name)
+        };
+
         self.variables.add_variable(name.clone(), value);
         return Ok(value);
     }
@@ -192,16 +217,16 @@ impl Visitor<TypedValue, TypedValue> for Interpreter {
 
     fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> Result<TypedValue, TypedValue> {
         while enum_cast!(self.visit_expr(cond)?, TypedValue::Int) != 0 {
-            self.visit_statement(body);
+            self.visit_statement(body)?;
         }
 
-        return Ok(TypedValue::Int(0)); // TODO this is actually a hack
+        return Ok(TypedValue::Void);
     }
 
     fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<TypedValue, TypedValue> {
         if enum_cast!(self.visit_expr(cond).unwrap(), TypedValue::Int) != 0 {
             self.visit_statement(body_if)?;
-            Ok(TypedValue::Int(0)) // TODO this is actually a hack
+            Ok(TypedValue::Void)
         } else {
             opt_body_else.as_ref().map_or(Ok(TypedValue::Int(0)), |body_else| {
                 self.visit_statement(&*body_else)
@@ -210,7 +235,7 @@ impl Visitor<TypedValue, TypedValue> for Interpreter {
     }
 
     fn visit_empty(&mut self) -> Result<TypedValue, TypedValue> {
-        return Ok(TypedValue::Int(0)); // TODO this is actually a hack
+        return Ok(TypedValue::Void);
     }
 
     fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, TypedValue>) -> Result<TypedValue, TypedValue> {
@@ -225,7 +250,7 @@ impl Visitor<TypedValue, TypedValue> for Interpreter {
                 self.visit_statement(stmt)?;
             }
 
-            Ok(TypedValue::Int(0))  // hack
+            Ok(TypedValue::Void)
         };
 
         let result = func();
@@ -263,8 +288,17 @@ impl Visitor<TypedValue, TypedValue> for Interpreter {
         self.variables.pop_layer();
 
         match result {
-            Ok(_) => panic!("A call to {} did not return a value", name),
-            Err(r) => Ok(r)
+            Ok(_) => {
+                assert_eq!(func.ret_type, Type::Void, "A call to '{}' did not return a value, while return type is not void: {:?}", name, func.ret_type);
+                Ok(TypedValue::Void)
+            },
+            Err(r) =>
+            {
+                let res_type = typeof_value(&r);
+                // TODO: cast to return type instead
+                assert_eq!(func.ret_type, res_type, "Function '{}' return value of type {:?} while expected {:?}.", name, res_type, func.ret_type);
+                Ok(r)
+            }
         }
     }
 
@@ -277,29 +311,29 @@ impl Visitor<TypedValue, TypedValue> for Interpreter {
 mod tests {
     use crate::ast::*;
     use crate::interpreter::*;
-    use crate::{interpreter, parser};
+    use crate::{parser};
 
     #[test]
     fn visit_literal() {
         let mut interpreter = Interpreter::empty();
-        let expr = Expr::Literal(Literal { value: 42 });
+        let expr = Expr::Literal(Literal::Int(42));
         assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(42));
     }
 
     #[test]
     fn visit_binary_plus() {
         let mut interpreter = Interpreter::empty();
-        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
-                                    Box::new(Expr::Literal(Literal { value: 5 })),
+        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal::Int(3))),
+                                    Box::new(Expr::Literal(Literal::Int(5))),
                                     Operator::Plus);
         assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(8));
     }
 
     #[test]
-    fn visit_binary_minux() {
+    fn visit_binary_minus() {
         let mut interpreter = Interpreter::empty();
-        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
-                                    Box::new(Expr::Literal(Literal { value: 5 })),
+        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal::Int(3))),
+                                    Box::new(Expr::Literal(Literal::Int(5))),
                                     Operator::Minus);
         assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(-2));
     }
@@ -307,8 +341,8 @@ mod tests {
     #[test]
     fn visit_binary_times() {
         let mut interpreter = Interpreter::empty();
-        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 3 })),
-                                    Box::new(Expr::Literal(Literal { value: 5 })),
+        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal::Int(3))),
+                                    Box::new(Expr::Literal(Literal::Int(5))),
                                     Operator::Times);
         assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(15));
     }
@@ -316,8 +350,8 @@ mod tests {
     #[test]
     fn visit_binary_div() {
         let mut interpreter = Interpreter::empty();
-        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal { value: 39 })),
-                                    Box::new(Expr::Literal(Literal { value: 5 })),
+        let expr = Expr::BinaryExpr(Box::new(Expr::Literal(Literal::Int(39))),
+                                    Box::new(Expr::Literal(Literal::Int(5))),
                                     Operator::Div);
         assert_eq!(interpreter.visit_expr(&expr).unwrap(), TypedValue::Int(7));
     }

@@ -1,15 +1,10 @@
 use std::collections::HashMap;
-use std::os::linux::raw::stat;
 use regex::Regex;
 use crate::ast;
 use ast::Operator;
-use crate::ast::{CompoundStmt, Expr, ExtDecl, FuncDef, Param, Stmt, TranslationUnit, Type, Variable};
+use crate::ast::{CompoundStmt, Expr, ExtDecl, FuncDef, Param, Stmt, TranslationUnit, Type, Variable, Literal};
 use crate::ast::Operator::{Div, Eq, Greater, Minus, Neq, Plus, Times};
 
-#[derive(Clone, PartialEq, Debug)]
-pub struct Literal {
-    pub value: i32,
-}
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Token {
@@ -74,7 +69,7 @@ impl Parser {
 
     fn parse_primary_expr(&mut self) -> Expr {
         match self.take() {
-            Token::Literal(ref e) => Expr::Literal(ast::Literal { value: e.value }),
+            Token::Literal(ref e) => Expr::Literal(*e),
             Token::LP => {
                 let expr = self.parse_expr();
                 self.accept(Token::RP);
@@ -229,6 +224,12 @@ impl Parser {
             }
             Token::Return => {
                 self.take();
+
+                if *self.peek() == Token::Sem {
+                    self.take();
+                    return Stmt::Return(Expr::Literal(Literal::Void));
+                }
+
                 return Stmt::Return(self.parse_expr());
             }
             _ => {
@@ -305,16 +306,6 @@ pub fn parse_expr(all_tokens: Vec<Token>) -> Expr {
     return res;
 }
 
-pub fn parse_compound_stmt(all_tokens: Vec<Token>) -> CompoundStmt {
-    let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
-
-    let res = parser.parse_compound_statement();
-    if *parser.peek() != Token::StopTag {
-        panic!("Unexpected tokens remaining");
-    }
-    return res;
-}
-
 pub fn parse_translation_unit(all_tokens: Vec<Token>) -> TranslationUnit {
     let mut parser = Parser { tokens: all_tokens, current_pos: 0 };
 
@@ -339,6 +330,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
                 match m_str {
                     // TODO: clean up with keywords table
                     "int" => res.push(Token::Type(Type::Int)),
+                    "void" => res.push(Token::Type(Type::Void)),
                     "while" => res.push(Token::While),
                     "if" => res.push(Token::If),
                     "else" => res.push(Token::Else),
@@ -346,7 +338,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
                     _ => res.push(Token::Identifier(m_str.parse().unwrap()))
                 }
             }
-            '0'..='9' => res.push(Token::Literal(Literal { value: m_str.parse::<i32>().unwrap() })),
+            '0'..='9' => res.push(Token::Literal(Literal::Int(m_str.parse::<i32>().unwrap()))),
             '(' => res.push(Token::LP),
             ')' => res.push(Token::RP),
             '{' => res.push(Token::Begin),
@@ -371,7 +363,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
 mod tests {
     use crate::ast;
     use ast::Expr;
-    use crate::ast::Variable;
+    use crate::ast::{Literal, Variable};
 
     use crate::parser as tok;
 
@@ -381,16 +373,16 @@ mod tests {
 
         let expected = vec![
             tok::Token::LP,
-            tok::Token::Literal(tok::Literal { value: 5 }),
+            tok::Token::Literal(Literal::Int(5)),
             tok::Token::Operator(ast::Operator::Plus),
-            tok::Token::Literal(tok::Literal { value: 3 }),
+            tok::Token::Literal(Literal::Int(3)),
             tok::Token::RP,
             tok::Token::Operator(ast::Operator::Minus),
             tok::Token::LP,
-            tok::Token::Literal(tok::Literal { value: 2 }),
+            tok::Token::Literal(Literal::Int(2)),
             tok::Token::RP,
             tok::Token::Operator(ast::Operator::Times),
-            tok::Token::Literal(tok::Literal { value: 7 }),
+            tok::Token::Literal(Literal::Int(7)),
         ];
 
         assert_eq!(tokes, expected);
@@ -402,16 +394,16 @@ mod tests {
             tok::Token::Identifier("a".to_string()),
             tok::Token::Operator(ast::Operator::Eq),
             tok::Token::LP,
-            tok::Token::Literal(tok::Literal { value: 5 }),
+            tok::Token::Literal(Literal::Int(5)),
             tok::Token::Operator(ast::Operator::Plus),
-            tok::Token::Literal(tok::Literal { value: 3 }),
+            tok::Token::Literal(Literal::Int(3)),
             tok::Token::RP,
             tok::Token::Operator(ast::Operator::Minus),
             tok::Token::LP,
-            tok::Token::Literal(tok::Literal { value: 2 }),
+            tok::Token::Literal(Literal::Int(2)),
             tok::Token::RP,
             tok::Token::Operator(ast::Operator::Times),
-            tok::Token::Literal(tok::Literal { value: 7 }),
+            tok::Token::Literal(Literal::Int(7)),
         ];
 
         let expr = tok::parse_expr(tokens);
@@ -422,13 +414,13 @@ mod tests {
                 Box::new(Expr::BinaryExpr(
                     Box::new(
                         Expr::BinaryExpr(
-                            Box::new(Expr::Literal(ast::Literal { value: 5 })),
-                            Box::new(Expr::Literal(ast::Literal { value: 3 })),
+                            Box::new(Expr::Literal(Literal::Int(5))),
+                            Box::new(Expr::Literal(Literal::Int(2))),
                             ast::Operator::Plus,
                         )),
                     Box::new(Expr::BinaryExpr(
-                        Box::new(Expr::Literal(ast::Literal { value: 2 })),
-                        Box::new(Expr::Literal(ast::Literal { value: 7 })),
+                        Box::new(Expr::Literal(Literal::Int(2))),
+                        Box::new(Expr::Literal(Literal::Int(7))),
                         ast::Operator::Times,
                     )),
                     ast::Operator::Minus,

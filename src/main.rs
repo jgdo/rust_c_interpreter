@@ -32,8 +32,17 @@ fn main() {
         return 1;
     }
 
+    void foo() {
+        if (5 > 3)  {
+            return;
+        }
+    }
+
+
     int main()
     {
+        foo();
+
        gcd(1071, 462);
        return fac(5);
     }
