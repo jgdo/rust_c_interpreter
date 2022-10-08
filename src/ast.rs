@@ -16,6 +16,7 @@ pub enum Operator {
 pub enum Literal {
     Int(i32),
     Void,
+
 }
 
 #[derive(PartialEq, Debug)]

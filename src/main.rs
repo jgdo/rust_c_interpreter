@@ -53,6 +53,6 @@ fn main() {
 
 
     let mut interp = Interpreter::new(trans_unit);
-    let value = interp.visit_function_call("main", &vec![]).unwrap();
+    let value = interp.visit_function_call("main", &vec![]).unwrap().to_rvalue();
     println!("Result: {:?}", value);
 }
