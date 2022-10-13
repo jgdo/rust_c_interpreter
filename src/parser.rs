@@ -69,7 +69,7 @@ impl Parser {
 
     fn parse_primary_expr(&mut self) -> Expr {
         match self.take() {
-            Token::Literal(ref e) => Expr::Literal(*e),
+            Token::Literal(ref e) => Expr::Literal(e.clone()),
             Token::LP => {
                 let expr = self.parse_expr();
                 self.accept(Token::RP);
@@ -95,6 +95,10 @@ impl Parser {
                     }
                     _ => Expr::Variable(Variable { name })
                 }
+            }
+            Token::Operator(op) => {
+                let op = *op;
+                Expr::UnaryExpr(Box::new(self.parse_primary_expr()), op)
             }
             _ => panic!("Unexpected Token")
         }
@@ -175,7 +179,7 @@ impl Parser {
 
     fn parse_type(&mut self) -> Type {
         match self.take() {
-            Token::Type(t) => *t,
+            Token::Type(t) => t.clone(),
             _ => panic!("Type expected"),
         }
     }
@@ -318,7 +322,7 @@ pub fn parse_translation_unit(all_tokens: Vec<Token>) -> TranslationUnit {
 
 pub fn tokenize(text: &str) -> Vec<Token> {
     // TODO this will actually match more than it should, fix eventually
-    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,").unwrap();
+    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,|&").unwrap();
 
     let mut res: Vec<Token> = vec![];
     for m in re.find_iter(text) {
@@ -330,6 +334,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
                 match m_str {
                     // TODO: clean up with keywords table
                     "int" => res.push(Token::Type(Type::Int)),
+                    "int_ptr" => res.push(Token::Type(Type::Ptr(Box::new(Type::Int)))),
                     "void" => res.push(Token::Type(Type::Void)),
                     "while" => res.push(Token::While),
                     "if" => res.push(Token::If),
@@ -352,6 +357,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
             '>' => res.push(Token::Operator(Greater)),
             ';' => res.push(Token::Sem),
             ',' => res.push(Token::Comma),
+            '&' => res.push(Token::Operator(Operator::And)),
             _ => { panic!("cannot tokenize '{}'", m_str) }
         }
     }

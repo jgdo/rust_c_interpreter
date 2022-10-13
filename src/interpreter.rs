@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::collections::{HashMap};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
@@ -11,6 +11,7 @@ impl RValue {
         match self {
             RValue::Int(_) => Type::Int,
             RValue::Void => Type::Void,
+            RValue::Ptr(t, _, _) => t.clone()
         }
     }
 }
@@ -18,6 +19,7 @@ impl RValue {
 #[derive(Clone, PartialEq, Debug)]
 pub enum VariableMemory {
     Int(Vec<i32>),
+    Ptr(Type, Vec<(usize, usize)>), // all inner types will be same
 }
 
 pub type VariableMemoryRc = Rc<RefCell<VariableMemory>>;
@@ -47,12 +49,14 @@ impl LValue {
     fn get_type(&self) -> Type {
         match self.mem.borrow().deref() {
             VariableMemory::Int(_) => Type::Int,
+            VariableMemory::Ptr(t, _) => t.clone(),
         }
     }
 
     fn to_rvalue(&self) -> RValue {
         match self.mem.borrow().deref() {
             VariableMemory::Int(vec) => RValue::Int(vec[self.idx]),
+            VariableMemory::Ptr(t, vec) => RValue::Ptr(t.clone(), vec[self.idx].0, vec[self.idx].1)
         }
     }
 
@@ -60,6 +64,15 @@ impl LValue {
         match self.mem.borrow_mut().deref_mut() {
             // TODO static cast value to right type
             VariableMemory::Int(vec) => { vec[self.idx] = enum_cast!(value, RValue::Int) }
+            VariableMemory::Ptr(t, vec) => {
+                let (value_t, value_hash, value_idx) = match value {
+                    RValue::Ptr(t, h, i) => (t, h, i),
+                    _ => panic!("type does not match"),
+                };
+
+                assert_eq!(*t, value_t, "Trying to assign a pointer to a different type of pointer");
+                vec[self.idx] = (value_hash, value_idx);
+            }
         }
     }
 }
@@ -80,7 +93,7 @@ impl Value {
 
     pub fn to_rvalue(&self) -> RValue {
         match self {
-            Value::RValue(rvalue) => *rvalue,
+            Value::RValue(rvalue) => rvalue.clone(),
             Value::LValue(lvalue) => lvalue.to_rvalue(),
         }
     }
@@ -132,6 +145,9 @@ impl InterpreterMemory {
                 VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![val])))
             }
             RValue::Void => panic!("Cannot instantiate void variable!"),
+            RValue::Ptr(t, hash, idx) => {
+                VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)])))
+            }
         };
 
         self.all_inst.insert(Rc::as_ptr(&mem) as usize, mem.clone());
@@ -164,6 +180,11 @@ impl InterpreterMemory {
         // return self.globals.get_mut(name).unwrap();
         panic!("Cannot find variable {}", name);
     }
+
+    pub fn lookup_ptr(&mut self, hash: usize, idx: usize) -> LValue
+    {
+        LValue { mem: self.all_inst.get_mut(&hash).unwrap().clone(), idx }
+    }
 }
 
 pub struct Interpreter {
@@ -195,6 +216,7 @@ impl Interpreter {
     }
 
     fn promote_operands(&mut self, lhs: Value, rhs: Value) -> (Value, Value) {
+        // TODO: do a real promotion!
         return (lhs, rhs);
     }
 
@@ -243,33 +265,48 @@ impl Interpreter {
 
 impl Visitor<Value, Value> for Interpreter {
     fn visit_literal(&mut self, e: &Literal) -> Result<Value, Value> {
-        return Ok(Value::RValue(*e));
+        return Ok(Value::RValue(e.clone()));
+    }
+
+    fn visit_unary_expr(&mut self, expr: &Expr, op: &Operator) -> Result<Value, Value> {
+        match op {
+            Operator::Times => {
+                let ptr = self.visit_expr(expr)?.to_rvalue();
+                match ptr {
+                    RValue::Ptr(t, hash, idx) => {
+                        let value = self.variables.lookup_ptr(hash, idx);
+                        // TODO check if type of value equals type of t
+                        Ok(Value::LValue(value))
+                    }
+                    _ => panic!("Trying to dereference an expression that is no a pointer"),
+                }
+            }
+            Operator::And => {
+                let value = enum_cast!(self.visit_expr(expr)?, Value::LValue);
+                return Ok(Value::RValue(RValue::Ptr(value.get_type(), Rc::as_ptr(&value.mem) as usize, value.idx)));
+            }
+            _ => panic!("Unknown unary operator {:?}", op)
+        }
     }
 
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<Value, Value> {
-        if *op == Operator::Eq {
-            match lhs {
-                Expr::Variable(ref var) => {
-                    let value = self.visit_expr(rhs)?;
-                    self.variables.set_variable(&var.name, value.to_rvalue());
-                    return Ok(value);
-                }
-                _ => panic!("Cannot assign value to expression")
-            }
-        } else {
-            let lhs = self.visit_expr(lhs)?;
-            let rhs = self.visit_expr(rhs)?;
-            let (lhs, rhs) = self.promote_operands(lhs, rhs);
+        let lhs = self.visit_expr(lhs)?;
+        let rhs = self.visit_expr(rhs)?;
+        let (lhs, rhs) = self.promote_operands(lhs, rhs);
 
-            match op {
-                Operator::Plus => Ok(self.op_add(lhs, rhs)),
-                Operator::Minus => Ok(self.op_sub(lhs, rhs)),
-                Operator::Times => Ok(self.op_mul(lhs, rhs)),
-                Operator::Div => Ok(self.op_div(lhs, rhs)),
-                Operator::Neq => Ok(self.op_neq(lhs, rhs)),
-                Operator::Greater => Ok(self.op_gt(lhs, rhs)),
-                _ => panic!("Unsupported op {:?}", *op),
+        match op {
+            Operator::Plus => Ok(self.op_add(lhs, rhs)),
+            Operator::Minus => Ok(self.op_sub(lhs, rhs)),
+            Operator::Times => Ok(self.op_mul(lhs, rhs)),
+            Operator::Div => Ok(self.op_div(lhs, rhs)),
+            Operator::Neq => Ok(self.op_neq(lhs, rhs)),
+            Operator::Greater => Ok(self.op_gt(lhs, rhs)),
+            Operator::Eq => {
+                let mut var = enum_cast!(lhs, Value::LValue);
+                var.assign(rhs.to_rvalue());
+                return Ok(Value::LValue(var));
             }
+            _ => panic!("Unsupported op {:?}", *op),
         }
     }
 
@@ -277,10 +314,20 @@ impl Visitor<Value, Value> for Interpreter {
         let value = match t {
             Type::Int => opt_init.as_ref().map_or(RValue::Int(0),
                                                   |expr| enum_check!(self.visit_expr(&expr).unwrap().to_rvalue(), RValue::Int)),
-            Type::Void => panic!("Cannot declare variable {} with type void.", name)
+            Type::Void => panic!("Cannot declare variable {} with type void.", name),
+            Type::Ptr(t_var) => opt_init.as_ref().map_or(RValue::Ptr(t_var.deref().clone(), 0, 0),
+                                                         |expr| {
+                                                             match self.visit_expr(&expr).unwrap().to_rvalue() {
+                                                                 RValue::Ptr(t_value, h, i) => {
+                                                                     assert_eq!(t_var.deref().clone(), t_value, "trying to assign a pointer an address to wrong type");
+                                                                     RValue::Ptr(t_value, h, i)
+                                                                 }
+                                                                 _ => panic!("trying to assign something to a pointer that isn't an address"),
+                                                             }
+                                                         }),
         };
 
-        self.variables.add_variable(name.clone(), value);
+        self.variables.add_variable(name.clone(), value.clone());
         return Ok(Value::RValue(value));
     }
 

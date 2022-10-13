@@ -10,13 +10,14 @@ pub enum Operator {
     Eq,
     Neq,
     Greater,
+    And,
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
     Int(i32),
     Void,
-
+    Ptr(Type, usize, usize),
 }
 
 #[derive(PartialEq, Debug)]
@@ -28,14 +29,16 @@ pub struct Variable {
 pub enum Expr {
     Variable(Variable),
     Literal(Literal),
+    UnaryExpr(Box<Expr>, Operator),
     BinaryExpr(Box<Expr>, Box<Expr>, Operator),
     FuncCall(String, Vec<Expr>),
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Type {
     Int,
     Void,
+    Ptr(Box<Type>),
 }
 
 #[derive(PartialEq, Debug)]
@@ -86,6 +89,7 @@ impl TranslationUnit {
 
 pub trait Visitor<R, E> where E: Debug {
     fn visit_literal(&mut self, e: &Literal) -> Result<R, E>;
+    fn visit_unary_expr(&mut self, expr: &Expr, op: &Operator) -> Result<R, E>;
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<R, E>;
     fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<R, E>;
     fn visit_var(&mut self, var: &Variable) -> Result<R, E>;
@@ -99,6 +103,7 @@ pub trait Visitor<R, E> where E: Debug {
     fn visit_expr(&mut self, e: &Expr) -> Result<R, E> {
         match e {
             Expr::Literal(ref lit) => self.visit_literal(lit),
+            Expr::UnaryExpr(ref inner, ref op) => self.visit_unary_expr(inner, op),
             Expr::BinaryExpr(ref lhs, ref rhs, ref op) => self.visit_binary_exp(lhs, rhs, op),
             Expr::Variable(ref var) => self.visit_var(var),
             Expr::FuncCall(ref name, ref args) => {

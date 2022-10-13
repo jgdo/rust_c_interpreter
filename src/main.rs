@@ -38,10 +38,23 @@ fn main() {
         }
     }
 
+    void bar(int_ptr p) {
+        *p = *p + 1;
+    }
+
 
     int main()
     {
         foo();
+
+        int i = 1;
+        int_ptr p = &i;
+        *p = 2;
+        print(i);
+        bar(&i);
+        print(i);
+        bar(p);
+        print(i);
 
        gcd(1071, 462);
        return fac(5);
