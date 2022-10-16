@@ -49,7 +49,7 @@ fn main() {
 
         int i = 1;
         int_ptr p = &i;
-        *p = 2;
+        p[0] = 2;
         print(i);
         bar(&i);
         print(i);

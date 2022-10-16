@@ -32,6 +32,7 @@ pub enum Expr {
     UnaryExpr(Box<Expr>, Operator),
     BinaryExpr(Box<Expr>, Box<Expr>, Operator),
     FuncCall(String, Vec<Expr>),
+    IndexExpr(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -99,6 +100,7 @@ pub trait Visitor<R, E> where E: Debug {
     fn visit_function_call(&mut self, name: &str, args: &Vec<R>) -> Result<R, E>;
     fn visit_compound_statement(&mut self, compound: &CompoundStmt, variables: &HashMap<String, R>) -> Result<R, E>;
     fn visit_return(&mut self, expr: &Expr) -> Result<R, E>;
+    fn visit_index_expr(&mut self, expr: &Expr, index_expr: &Expr) -> Result<R, E>;
 
     fn visit_expr(&mut self, e: &Expr) -> Result<R, E> {
         match e {
@@ -109,7 +111,8 @@ pub trait Visitor<R, E> where E: Debug {
             Expr::FuncCall(ref name, ref args) => {
                 let args_values = &args.iter().map(|e| self.visit_expr(e).unwrap()).collect();
                 self.visit_function_call(name, args_values)
-            }
+            },
+            Expr::IndexExpr(expr, idx) => self.visit_index_expr(expr, idx),
         }
     }
 

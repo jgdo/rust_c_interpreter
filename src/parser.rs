@@ -25,6 +25,9 @@ pub enum Token {
     Else,
     Comma,
     Return,
+    BBL,
+    // [
+    BBR, // ]
 }
 
 struct Parser {
@@ -67,6 +70,7 @@ impl Parser {
         }
     }
 
+
     fn parse_primary_expr(&mut self) -> Expr {
         match self.take() {
             Token::Literal(ref e) => Expr::Literal(e.clone()),
@@ -98,14 +102,32 @@ impl Parser {
             }
             Token::Operator(op) => {
                 let op = *op;
-                Expr::UnaryExpr(Box::new(self.parse_primary_expr()), op)
+                Expr::UnaryExpr(Box::new(self.parse_postfix_expr()), op)
             }
             _ => panic!("Unexpected Token")
         }
     }
 
-    fn parse_mul_expr(&mut self) -> Expr {
+    fn parse_postfix_expr(&mut self) -> Expr {
         let mut expr = self.parse_primary_expr();
+
+        loop {
+            match self.peek() {
+                Token::BBL => {
+                    self.take();
+                    let index = self.parse_expr();
+                    self.accept(Token::BBR);
+                    expr = Expr::IndexExpr(Box::new(expr), Box::new(index))
+                }
+                _ => { break; }
+            }
+        }
+
+        return expr;
+    }
+
+    fn parse_mul_expr(&mut self) -> Expr {
+        let mut expr = self.parse_postfix_expr();
 
         loop {
             match self.peek() {
@@ -113,7 +135,7 @@ impl Parser {
                     if *op == Operator::Times || *op == Operator::Div {
                         let op = *op;
                         self.take();
-                        let rhs = self.parse_primary_expr();
+                        let rhs = self.parse_postfix_expr();
                         expr = Expr::BinaryExpr(Box::new(expr), Box::new(rhs), op);
                     } else {
                         break;
@@ -320,46 +342,51 @@ pub fn parse_translation_unit(all_tokens: Vec<Token>) -> TranslationUnit {
     return res;
 }
 
+fn extract_token(str: &str) -> Token
+{
+    return match str.chars().next().unwrap() {
+        'A'..='Z' | 'a'..='z' | '_' => {
+            match str {
+                // TODO: clean up with keywords table
+                "int" => Token::Type(Type::Int),
+                "int_ptr" => Token::Type(Type::Ptr(Box::new(Type::Int))),
+                "void" => Token::Type(Type::Void),
+                "while" => Token::While,
+                "if" => Token::If,
+                "else" => Token::Else,
+                "return" => Token::Return,
+                _ => Token::Identifier(str.parse().unwrap()),
+            }
+        }
+        '0'..='9' => Token::Literal(Literal::Int(str.parse::<i32>().unwrap())),
+        '(' => Token::LP,
+        ')' => Token::RP,
+        '{' => Token::Begin,
+        '}' => Token::End,
+        '+' => Token::Operator(Plus),
+        '-' => Token::Operator(Minus),
+        '*' => Token::Operator(Times),
+        '/' => Token::Operator(Div),
+        '=' => Token::Operator(Eq),
+        '!' => Token::Operator(Neq), // TODO will match more
+        '>' => Token::Operator(Greater),
+        ';' => Token::Sem,
+        ',' => Token::Comma,
+        '&' => Token::Operator(Operator::And),
+        '[' => Token::BBL,
+        ']' => Token::BBR,
+        _ => panic!("cannot tokenize '{}'", str),
+    };
+}
+
+
 pub fn tokenize(text: &str) -> Vec<Token> {
     // TODO this will actually match more than it should, fix eventually
-    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,|&").unwrap();
+    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,|&|\[|]").unwrap();
 
     let mut res: Vec<Token> = vec![];
     for m in re.find_iter(text) {
-        let m_str = m.as_str();
-
-        match m_str.chars().next().unwrap() {
-            // TODO refactor for not needing to call res.push() every time
-            'A'..='Z' | 'a'..='z' | '_' => {
-                match m_str {
-                    // TODO: clean up with keywords table
-                    "int" => res.push(Token::Type(Type::Int)),
-                    "int_ptr" => res.push(Token::Type(Type::Ptr(Box::new(Type::Int)))),
-                    "void" => res.push(Token::Type(Type::Void)),
-                    "while" => res.push(Token::While),
-                    "if" => res.push(Token::If),
-                    "else" => res.push(Token::Else),
-                    "return" => res.push(Token::Return),
-                    _ => res.push(Token::Identifier(m_str.parse().unwrap()))
-                }
-            }
-            '0'..='9' => res.push(Token::Literal(Literal::Int(m_str.parse::<i32>().unwrap()))),
-            '(' => res.push(Token::LP),
-            ')' => res.push(Token::RP),
-            '{' => res.push(Token::Begin),
-            '}' => res.push(Token::End),
-            '+' => res.push(Token::Operator(Plus)),
-            '-' => res.push(Token::Operator(Minus)),
-            '*' => res.push(Token::Operator(Times)),
-            '/' => res.push(Token::Operator(Div)),
-            '=' => res.push(Token::Operator(Eq)),
-            '!' => res.push(Token::Operator(Neq)), // TODO will match more
-            '>' => res.push(Token::Operator(Greater)),
-            ';' => res.push(Token::Sem),
-            ',' => res.push(Token::Comma),
-            '&' => res.push(Token::Operator(Operator::And)),
-            _ => { panic!("cannot tokenize '{}'", m_str) }
-        }
+        res.push(extract_token(m.as_str()));
     }
 
     return res;

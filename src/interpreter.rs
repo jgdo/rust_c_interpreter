@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell};
+use std::cell::{RefCell};
 use std::collections::{HashMap};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
@@ -43,6 +43,15 @@ macro_rules! enum_cast {
             }
         }
     };
+}
+
+// https://stackoverflow.com/questions/54035728/how-to-add-a-negative-i32-number-to-an-usize-variable
+fn add(u: usize, i: i32) -> usize {
+    if i.is_negative() {
+        u - i.wrapping_abs() as u32 as usize
+    } else {
+        u + i as usize
+    }
 }
 
 impl LValue {
@@ -425,6 +434,17 @@ impl Visitor<Value, Value> for Interpreter {
 
     fn visit_return(&mut self, expr: &Expr) -> Result<Value, Value> {
         return Err(self.visit_expr(expr).unwrap());
+    }
+
+    fn visit_index_expr(&mut self, expr: &Expr, index_expr: &Expr) -> Result<Value, Value> {
+        let expr_value = self.visit_expr(expr)?.to_rvalue();
+        let index = enum_cast!(self.visit_expr(index_expr)?.to_rvalue(), RValue::Int);
+
+        match expr_value {
+            RValue::Ptr(_, h, i) =>
+                Ok(Value::LValue(self.variables.lookup_ptr(h, add(i, index)))),
+            _ => panic!("Cannot index non-pointer value"),
+        }
     }
 }
 
