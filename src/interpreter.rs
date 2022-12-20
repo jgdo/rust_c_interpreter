@@ -11,7 +11,7 @@ impl RValue {
         match self {
             RValue::Int(_) => Type::Int,
             RValue::Void => Type::Void,
-            RValue::Ptr(t, _, _) => t.clone()
+            RValue::Ptr(t, _, _) => Type::Ptr(Box::new(t.clone())),
         }
     }
 }
@@ -58,7 +58,7 @@ impl LValue {
     fn get_type(&self) -> Type {
         match self.mem.borrow().deref() {
             VariableMemory::Int(_) => Type::Int,
-            VariableMemory::Ptr(t, _) => t.clone(),
+            VariableMemory::Ptr(t, _) => Type::Ptr(Box::new(t.clone())),
         }
     }
 
@@ -148,7 +148,28 @@ impl InterpreterMemory {
         self.top_layer().pop().unwrap();
     }
 
-    pub fn add_variable(&mut self, name: String, value: RValue) {
+    pub fn add_variable(&mut self, name: String, t: &Type, init_value: RValue) {
+        /*
+
+        let value = match t {
+            Type::Int => opt_init.as_ref().map_or(RValue::Int(0),
+                                                  |expr| enum_check!(self.visit_expr(&expr).unwrap().to_rvalue(), RValue::Int)),
+            Type::Void => panic!("Cannot declare variable {} with type void.", name),
+            Type::Ptr(t_var) => opt_init.as_ref().map_or(RValue::Ptr(t_var.deref().clone(), 0, 0),
+                                                         |expr| {
+                                                             match self.visit_expr(&expr).unwrap().to_rvalue() {
+                                                                 RValue::Ptr(t_value, h, i) => {
+                                                                     assert_eq!(t_var.deref().clone(), t_value, "trying to assign a pointer an address to wrong type");
+                                                                     RValue::Ptr(t_value, h, i)
+                                                                 }
+                                                                 _ => panic!("trying to assign something to a pointer that isn't an address"),
+                                                             }
+                                                         }),
+        };
+
+         */
+
+        /*
         let mem = match value {
             RValue::Int(val) => {
                 VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![val])))
@@ -156,6 +177,21 @@ impl InterpreterMemory {
             RValue::Void => panic!("Cannot instantiate void variable!"),
             RValue::Ptr(t, hash, idx) => {
                 VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)])))
+            }
+        };
+        */
+
+        // TODO properly promote init_value to t type
+        let mem = match t {
+            Type::Int => {
+                VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![enum_cast!(init_value, RValue::Int)])))
+            },
+            Type::Void => panic!("Cannot declare variable {} with type void.", name),
+            Type::Ptr(t_ptr) => {
+                match init_value {
+                    RValue::Ptr(t, hash, idx) => VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)]))),
+                    _ => panic!("trying to assign something to a pointer that isn't an address")
+                }
             }
         };
 
@@ -320,23 +356,16 @@ impl Visitor<Value, Value> for Interpreter {
     }
 
     fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<Value, Value> {
+        // TODO: make a table of default int values per type instead
         let value = match t {
             Type::Int => opt_init.as_ref().map_or(RValue::Int(0),
-                                                  |expr| enum_check!(self.visit_expr(&expr).unwrap().to_rvalue(), RValue::Int)),
+                                                  |expr| self.visit_expr(&expr).unwrap().to_rvalue()),
             Type::Void => panic!("Cannot declare variable {} with type void.", name),
             Type::Ptr(t_var) => opt_init.as_ref().map_or(RValue::Ptr(t_var.deref().clone(), 0, 0),
-                                                         |expr| {
-                                                             match self.visit_expr(&expr).unwrap().to_rvalue() {
-                                                                 RValue::Ptr(t_value, h, i) => {
-                                                                     assert_eq!(t_var.deref().clone(), t_value, "trying to assign a pointer an address to wrong type");
-                                                                     RValue::Ptr(t_value, h, i)
-                                                                 }
-                                                                 _ => panic!("trying to assign something to a pointer that isn't an address"),
-                                                             }
-                                                         }),
+                                                         |expr| {  self.visit_expr(&expr).unwrap().to_rvalue()}),
         };
 
-        self.variables.add_variable(name.clone(), value.clone());
+        self.variables.add_variable(name.clone(), t,value.clone());
         return Ok(Value::RValue(value));
     }
 
@@ -416,7 +445,8 @@ impl Visitor<Value, Value> for Interpreter {
         self.variables.push_scope();
 
         for (name, value) in variables {
-            self.variables.add_variable(name.clone(), value.to_rvalue());
+            let r_value = value.to_rvalue();
+            self.variables.add_variable(name.clone(), &r_value.get_type() ,r_value);
         }
 
         let mut func = || -> Result<Value, Value> {

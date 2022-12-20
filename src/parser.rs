@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env::var;
 use regex::Regex;
 use crate::ast;
 use ast::Operator;
@@ -200,10 +201,18 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Type {
-        match self.take() {
+        let mut var_type = match self.take() {
             Token::Type(t) => t.clone(),
             _ => panic!("Type expected"),
+        };
+
+        while *self.peek() == Token::Operator(Times){
+            self.take();
+
+            var_type = Type::Ptr(Box::new(var_type));
         }
+
+        return var_type;
     }
 
     fn parse_statement(&mut self) -> Stmt {
@@ -349,7 +358,6 @@ fn extract_token(str: &str) -> Token
             match str {
                 // TODO: clean up with keywords table
                 "int" => Token::Type(Type::Int),
-                "int_ptr" => Token::Type(Type::Ptr(Box::new(Type::Int))),
                 "void" => Token::Type(Type::Void),
                 "while" => Token::While,
                 "if" => Token::If,

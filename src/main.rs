@@ -38,7 +38,7 @@ fn main() {
         }
     }
 
-    void bar(int_ptr p) {
+    void bar(int* p) {
         *p = *p + 1;
     }
 
@@ -48,7 +48,7 @@ fn main() {
         foo();
 
         int i = 1;
-        int_ptr p = &i;
+        int* p = &i;
         p[0] = 2;
         print(i);
         bar(&i);
