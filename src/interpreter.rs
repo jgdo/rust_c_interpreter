@@ -28,7 +28,7 @@ pub type VariableMemoryRc = Rc<RefCell<VariableMemory>>;
 #[derive(Clone, PartialEq, Debug)]
 pub struct LValue {
     mem: VariableMemoryRc,
-    idx: usize,
+    idx: Option<usize>, // index of the variable inside mem. If none, this LValue represents an array
 }
 
 macro_rules! enum_cast {
@@ -64,15 +64,20 @@ impl LValue {
 
     fn to_rvalue(&self) -> RValue {
         match self.mem.borrow().deref() {
-            VariableMemory::Int(vec) => RValue::Int(vec[self.idx]),
-            VariableMemory::Ptr(t, vec) => RValue::Ptr(t.clone(), vec[self.idx].0, vec[self.idx].1)
+            VariableMemory::Int(vec) => {
+                match self.idx {
+                    Some(my_idx ) => RValue::Int(vec[my_idx]),
+                    None => RValue::Ptr(Type::Ptr(Box::new(Type::Int)), Rc::as_ptr(&self.mem) as usize, 0)
+                }
+            },
+            VariableMemory::Ptr(t, vec) => RValue::Ptr(t.clone(), vec[self.idx.unwrap()].0, vec[self.idx.unwrap()].1)
         }
     }
 
     fn assign(&mut self, value: RValue) {
         match self.mem.borrow_mut().deref_mut() {
             // TODO static cast value to right type
-            VariableMemory::Int(vec) => { vec[self.idx] = enum_cast!(value, RValue::Int) }
+            VariableMemory::Int(vec) => { vec[self.idx.unwrap()] = enum_cast!(value, RValue::Int) }
             VariableMemory::Ptr(t, vec) => {
                 let (value_t, value_hash, value_idx) = match value {
                     RValue::Ptr(t, h, i) => (t, h, i),
@@ -80,7 +85,7 @@ impl LValue {
                 };
 
                 assert_eq!(*t, value_t, "Trying to assign a pointer to a different type of pointer");
-                vec[self.idx] = (value_hash, value_idx);
+                vec[self.idx.unwrap()] = (value_hash, value_idx);
             }
         }
     }
@@ -148,7 +153,7 @@ impl InterpreterMemory {
         self.top_layer().pop().unwrap();
     }
 
-    pub fn add_variable(&mut self, name: String, t: &Type, init_value: RValue) {
+    pub fn add_variable(&mut self, name: String, var_type: &Type, init_value: RValue) {
         /*
 
         let value = match t {
@@ -182,17 +187,25 @@ impl InterpreterMemory {
         */
 
         // TODO properly promote init_value to t type
-        let mem = match t {
+        let mem = match var_type {
             Type::Int => {
                 VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![enum_cast!(init_value, RValue::Int)])))
             },
             Type::Void => panic!("Cannot declare variable {} with type void.", name),
             Type::Ptr(t_ptr) => {
                 match init_value {
-                    RValue::Ptr(t, hash, idx) => VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)]))),
+                    RValue::Ptr(t, hash, idx) => {
+                        assert_eq!(**t_ptr, t, "Source pointer type does not match to target pointer type");
+                        VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)])))
+                    } ,
                     _ => panic!("trying to assign something to a pointer that isn't an address")
                 }
-            }
+            },
+            Type::Array(array_len, elem_type_box) => {
+                assert_eq!(**elem_type_box, Type::Int, "only int arrays supported");
+                let init_elem = enum_cast!(init_value, RValue::Int);
+                VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![init_elem; *array_len])))
+            },
         };
 
         self.all_inst.insert(Rc::as_ptr(&mem) as usize, mem.clone());
@@ -203,7 +216,10 @@ impl InterpreterMemory {
             panic!("Variable {} already declared", name);
         }
 
-        scope.insert(name.clone(), LValue { mem, idx: 0 });
+        match var_type {
+            Type::Array(_, _) => scope.insert(name.clone(), LValue { mem, idx: None }),
+            _ => scope.insert(name.clone(), LValue { mem, idx: Some(0) }),
+        };
     }
 
     pub fn set_variable(&mut self, name: &String, value: RValue) {
@@ -228,7 +244,7 @@ impl InterpreterMemory {
 
     pub fn lookup_ptr(&mut self, hash: usize, idx: usize) -> LValue
     {
-        LValue { mem: self.all_inst.get_mut(&hash).unwrap().clone(), idx }
+        LValue { mem: self.all_inst.get_mut(&hash).unwrap().clone(), idx: Some(idx) }
     }
 }
 
@@ -267,8 +283,11 @@ impl Interpreter {
 
     fn op_add(&mut self, lhs: Value, rhs: Value) -> Value {
         match lhs.to_rvalue() {
-            RValue::Int(lhs) => { Value::RValue(RValue::Int(lhs + enum_cast!(rhs.to_rvalue(), RValue::Int))) }
-            _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
+            // integer add
+            RValue::Int(lhs) =>  Value::RValue(RValue::Int(lhs + enum_cast!(rhs.to_rvalue(), RValue::Int))) ,
+            // pointer add
+            RValue::Ptr(elem_type, hash, index) => Value::RValue(RValue::Ptr(elem_type, hash, (index as i32 + enum_cast!(rhs.to_rvalue(), RValue::Int)) as usize)),
+                _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
@@ -328,7 +347,7 @@ impl Visitor<Value, Value> for Interpreter {
             }
             Operator::And => {
                 let value = enum_cast!(self.visit_expr(expr)?, Value::LValue);
-                return Ok(Value::RValue(RValue::Ptr(value.get_type(), Rc::as_ptr(&value.mem) as usize, value.idx)));
+                return Ok(Value::RValue(RValue::Ptr(value.get_type(), Rc::as_ptr(&value.mem) as usize, value.idx.unwrap())));
             }
             _ => panic!("Unknown unary operator {:?}", op)
         }
@@ -363,6 +382,9 @@ impl Visitor<Value, Value> for Interpreter {
             Type::Void => panic!("Cannot declare variable {} with type void.", name),
             Type::Ptr(t_var) => opt_init.as_ref().map_or(RValue::Ptr(t_var.deref().clone(), 0, 0),
                                                          |expr| {  self.visit_expr(&expr).unwrap().to_rvalue()}),
+
+            Type::Array(_, _) => opt_init.as_ref().map_or(RValue::Int(0),
+                                                                               |expr| self.visit_expr(&expr).unwrap().to_rvalue()),
         };
 
         self.variables.add_variable(name.clone(), t,value.clone());

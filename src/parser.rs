@@ -26,8 +26,7 @@ pub enum Token {
     Else,
     Comma,
     Return,
-    BBL,
-    // [
+    BBL, // [
     BBR, // ]
 }
 
@@ -200,6 +199,18 @@ impl Parser {
         return condition;
     }
 
+    fn parse_int(&mut self) -> i32 {
+        let tok = self.take();
+        match tok {
+            Token::Literal(lit) =>
+                    match *lit {
+                        Literal::Int(val) => val,
+                        _ => panic!("Integer literal expected, found {:?}", *lit)
+                    },
+            _ => panic!("Integer literal expected, found {:?}", tok),
+        }
+    }
+
     fn parse_type(&mut self) -> Type {
         let mut var_type = match self.take() {
             Token::Type(t) => t.clone(),
@@ -210,6 +221,14 @@ impl Parser {
             self.take();
 
             var_type = Type::Ptr(Box::new(var_type));
+        }
+
+        if *self.peek() == Token::BBL {
+            self.take();
+            let array_len = self.parse_int();
+            self.accept(Token::BBR);
+
+            var_type = Type::Array(array_len as usize, Box::new(var_type));
         }
 
         return var_type;

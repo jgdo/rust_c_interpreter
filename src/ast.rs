@@ -17,7 +17,7 @@ pub enum Operator {
 pub enum Literal {
     Int(i32),
     Void,
-    Ptr(Type, usize, usize),
+    Ptr(Type, usize, usize), // type, hash, index
 }
 
 #[derive(PartialEq, Debug)]
@@ -40,6 +40,7 @@ pub enum Type {
     Int,
     Void,
     Ptr(Box<Type>),
+    Array(usize, Box<Type>),
 }
 
 #[derive(PartialEq, Debug)]

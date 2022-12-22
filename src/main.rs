@@ -49,6 +49,9 @@ fn main() {
 
         int i = 1;
         int* p = &i;
+
+        int** pp = &p;
+
         p[0] = 2;
         print(i);
         bar(&i);
@@ -56,7 +59,19 @@ fn main() {
         bar(p);
         print(i);
 
+        **pp = 123;
+        print(i);
+
        gcd(1071, 462);
+
+       int[5] arr = 3;
+
+       arr[0] = 5;
+       bar(arr+2);
+       print(arr[0]);
+       print(arr[1]);
+       print(arr[2]);
+
        return fac(5);
     }
     ");
