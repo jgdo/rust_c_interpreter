@@ -26,7 +26,7 @@ impl RValue {
             RValue::Int(_) => Type::Int,
             RValue::Char(_) => Type::Char,
             RValue::Void => Type::Void,
-            RValue::Ptr(t, _, _) => Type::Ptr(Box::new(t.clone())),
+            RValue::Ptr(t, _, _) => Type::create_ptr(t.clone()),
         }
     }
 
@@ -46,46 +46,12 @@ impl RValue {
                     _ => {}
                 }
             }
-            RValue::Void => {}
-            RValue::Ptr(_, _, _) => {}
+            RValue::Void => if target_type == Type::Void { return self.clone(); },
+            RValue::Ptr(self_elem_type, _, _) =>
+                if target_type == Type::create_ptr(self_elem_type.clone()) { return self.clone(); }
         };
 
         panic!("Cannot convert {} to {}", self.get_type(), target_type);
-    }
-
-    // integer types will be promoted to bigger type
-    // (integer + ptr) or (ptr + integer) will be promoted to (ptr, int), swapping lhs/rhs if needed
-    fn promote_for_binary_op(self, rhs: RValue) -> (RValue, RValue) {
-        let target_type = rhs.get_type();
-
-        match self {
-            RValue::Int(_) => {
-                match target_type {
-                    Type::Int => return (self.clone(), rhs.clone()),
-                    Type::Char => return (self.clone(), rhs.promote_to(Type::Int)),
-                    Type::Ptr(_) => return (rhs.clone(), self.clone()),
-                    _ => {}
-                }
-            }
-            RValue::Char(_) => {
-                match target_type {
-                    Type::Int => return (self.promote_to(Type::Int), rhs.clone()),
-                    Type::Char => return (self.clone(), rhs.clone()),
-                    Type::Ptr(_) => return (rhs.promote_to(Type::Int), self.clone()),
-                    _ => {}
-                }
-            }
-            RValue::Void => {}
-            RValue::Ptr(_, _, _) => {
-                match target_type {
-                    Type::Int => return (self.clone(), rhs.clone()),
-                    Type::Char => return (self.clone(), rhs.promote_to(Type::Int)),
-                    _ => {}
-                }
-            }
-        };
-
-        panic!("Cannot promote values for binary op of types {} {}", self.get_type(), rhs.get_type());
     }
 }
 
@@ -133,7 +99,7 @@ impl LValue {
         match self.mem.borrow().deref() {
             VariableMemory::Int(_) => Type::Int,
             VariableMemory::Char(_) => Type::Char,
-            VariableMemory::Ptr(element_type, _) => Type::Ptr(Box::new(element_type.clone())),
+            VariableMemory::Ptr(element_type, _) => Type::create_ptr(element_type.clone()),
         }
     }
 
@@ -273,11 +239,6 @@ impl InterpreterMemory {
         };
     }
 
-    pub fn set_variable(&mut self, name: &String, value: RValue) {
-        let var = self.lookup_value(name);
-        var.assign(value);
-    }
-
     pub fn lookup_value(&mut self, name: &String) -> &mut LValue {
         let top_layer = self.top_layer();
 
@@ -304,19 +265,6 @@ pub struct Interpreter {
     translation_unit: Rc<TranslationUnit>,
 }
 
-macro_rules! enum_check {
-    ($target: expr, $pat: path) => {
-        {
-            if let $pat(_) = $target { // #1
-                $target
-            } else {
-                panic!(
-                    "mismatch variant when cast to {}",
-                    stringify!($pat)); // #2
-            }
-        }
-    };
-}
 
 impl Interpreter {
     pub fn new(unit: TranslationUnit) -> Interpreter {
@@ -327,56 +275,84 @@ impl Interpreter {
         Interpreter { variables: InterpreterMemory::new(), translation_unit: Rc::new(TranslationUnit::new()) }
     }
 
-    fn promote_operands(&mut self, lhs: Value, rhs: Value) -> (Value, Value) {
-        // TODO: do a real promotion!
-        return (lhs, rhs);
-    }
-
-    fn op_add(&mut self, lhs: Value, rhs: Value) -> Value {
-        let (lhs, rhs) = lhs.to_rvalue().promote_for_binary_op(rhs.to_rvalue());
+    // integer types will be promoted to bigger type
+    // (integer + ptr) or (ptr + integer) will be promoted to (ptr, int), swapping lhs/rhs if needed
+    fn promote_binary_operands(&mut self, lhs: RValue, rhs: RValue) -> (RValue, RValue) {
+        let target_type = rhs.get_type();
 
         match lhs {
+            RValue::Int(_) => {
+                match target_type {
+                    Type::Int => return (lhs.clone(), rhs.clone()),
+                    Type::Char => return (lhs.clone(), rhs.promote_to(Type::Int)),
+                    Type::Ptr(_) => return (rhs.clone(), lhs.clone()),
+                    _ => {}
+                }
+            }
+            RValue::Char(_) => {
+                match target_type {
+                    Type::Int => return (lhs.promote_to(Type::Int), rhs.clone()),
+                    Type::Char => return (lhs.clone(), rhs.clone()),
+                    Type::Ptr(_) => return (rhs.promote_to(Type::Int), lhs.clone()),
+                    _ => {}
+                }
+            }
+            RValue::Void => {}
+            RValue::Ptr(_, _, _) => {
+                match target_type {
+                    Type::Int => return (lhs.clone(), rhs.clone()),
+                    Type::Char => return (lhs.clone(), rhs.promote_to(Type::Int)),
+                    _ => {}
+                }
+            }
+        };
+
+        panic!("Cannot promote values for binary op of types {} {}", lhs.get_type(), rhs.get_type());
+    }
+
+    fn op_add(&mut self, lhs: RValue, rhs: RValue) -> RValue {
+        match lhs {
             // integer add
-            RValue::Int(lhs) => Value::RValue(RValue::Int(lhs + enum_cast!(rhs, RValue::Int))),
-            RValue::Char(lhs) => Value::RValue(RValue::Char(char::try_from(lhs as u32 + enum_cast!(rhs, RValue::Char) as u32).unwrap())),
+            RValue::Int(lhs) => RValue::Int(lhs + enum_cast!(rhs, RValue::Int)),
+            RValue::Char(lhs) => RValue::Char(char::try_from(lhs as u32 + enum_cast!(rhs, RValue::Char) as u32).unwrap()),
             // pointer add
             RValue::Ptr(elem_type, hash, index) =>
-                Value::RValue(RValue::Ptr(elem_type, hash, (index as i32 + enum_cast!(rhs, RValue::Int)) as usize)),
+                RValue::Ptr(elem_type, hash, (index as i32 + enum_cast!(rhs, RValue::Int)) as usize),
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
-    fn op_sub(&mut self, lhs: Value, rhs: Value) -> Value {
-        match lhs.to_rvalue() {
-            RValue::Int(lhs) => { Value::RValue(RValue::Int(lhs - enum_cast!(rhs.to_rvalue(), RValue::Int))) }
+    fn op_sub(&mut self, lhs: RValue, rhs: RValue) -> RValue {
+        match lhs {
+            RValue::Int(lhs) => RValue::Int(lhs - enum_cast!(rhs, RValue::Int)),
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
-    fn op_mul(&mut self, lhs: Value, rhs: Value) -> Value {
-        match lhs.to_rvalue() {
-            RValue::Int(lhs) => { Value::RValue(RValue::Int(lhs * enum_cast!(rhs.to_rvalue(), RValue::Int))) }
+    fn op_mul(&mut self, lhs: RValue, rhs: RValue) -> RValue {
+        match lhs {
+            RValue::Int(lhs) => RValue::Int(lhs * enum_cast!(rhs, RValue::Int)),
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
-    fn op_div(&mut self, lhs: Value, rhs: Value) -> Value {
-        match lhs.to_rvalue() {
-            RValue::Int(lhs) => { Value::RValue(RValue::Int(lhs / enum_cast!(rhs.to_rvalue(), RValue::Int))) }
+    fn op_div(&mut self, lhs: RValue, rhs: RValue) -> RValue {
+        match lhs {
+            RValue::Int(lhs) => RValue::Int(lhs / enum_cast!(rhs, RValue::Int)),
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
-    fn op_neq(&mut self, lhs: Value, rhs: Value) -> Value {
-        match lhs.to_rvalue() {
-            RValue::Int(lhs) => { Value::RValue(RValue::Int(if lhs != enum_cast!(rhs.to_rvalue(), RValue::Int) { 1 } else { 0 })) }
+    fn op_neq(&mut self, lhs: RValue, rhs: RValue) -> RValue {
+        match lhs {
+            RValue::Int(lhs) => RValue::Int(if lhs != enum_cast!(rhs, RValue::Int) { 1 } else { 0 }),
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
-    fn op_gt(&mut self, lhs: Value, rhs: Value) -> Value {
-        match lhs.to_rvalue() {
-            RValue::Int(lhs) => { Value::RValue(RValue::Int(if lhs > enum_cast!(rhs.to_rvalue(), RValue::Int) { 1 } else { 0 })) }
+    fn op_gt(&mut self, lhs: RValue, rhs: RValue) -> RValue {
+        match lhs {
+            RValue::Int(lhs) => RValue::Int(if lhs > enum_cast!(rhs, RValue::Int) { 1 } else { 0 }),
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
@@ -401,9 +377,12 @@ impl Visitor<Value, Value> for Interpreter {
             Operator::Times => {
                 let ptr = self.visit_expr(expr)?.to_rvalue();
                 match ptr {
-                    RValue::Ptr(t, hash, idx) => {
+                    RValue::Ptr(expected_inner_type, hash, idx) => {
                         let value = self.variables.lookup_ptr(hash, idx);
-                        // TODO check if type of value equals type of t
+                        let value_type = value.get_type();
+                        assert_eq!(value_type, expected_inner_type,
+                                   "Trying to dereference a pointer of type {}* pointing to data of element type {}.",
+                                   expected_inner_type, value_type);
                         Ok(Value::LValue(value))
                     }
                     _ => panic!("Trying to dereference an expression that is no a pointer"),
@@ -420,22 +399,24 @@ impl Visitor<Value, Value> for Interpreter {
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<Value, Value> {
         let lhs = self.visit_expr(lhs)?;
         let rhs = self.visit_expr(rhs)?;
-        let (lhs, rhs) = self.promote_operands(lhs, rhs);
 
-        match op {
-            Operator::Plus => Ok(self.op_add(lhs, rhs)),
-            Operator::Minus => Ok(self.op_sub(lhs, rhs)),
-            Operator::Times => Ok(self.op_mul(lhs, rhs)),
-            Operator::Div => Ok(self.op_div(lhs, rhs)),
-            Operator::Neq => Ok(self.op_neq(lhs, rhs)),
-            Operator::Greater => Ok(self.op_gt(lhs, rhs)),
-            Operator::Eq => {
-                let mut var = enum_cast!(lhs, Value::LValue);
-                var.assign(rhs.to_rvalue());
-                return Ok(Value::LValue(var));
-            }
-            _ => panic!("Unsupported op {:?}", *op),
+        if *op == Operator::Eq {
+            let mut lhs = enum_cast!(lhs, Value::LValue);
+            lhs.assign(rhs.to_rvalue());
+            return Ok(Value::LValue(lhs));
         }
+
+        let (lhs, rhs) = self.promote_binary_operands(lhs.to_rvalue(), rhs.to_rvalue());
+
+        Ok(Value::RValue(match op {
+            Operator::Plus => self.op_add(lhs, rhs),
+            Operator::Minus => self.op_sub(lhs, rhs),
+            Operator::Times => self.op_mul(lhs, rhs),
+            Operator::Div => self.op_div(lhs, rhs),
+            Operator::Neq => self.op_neq(lhs, rhs),
+            Operator::Greater => self.op_gt(lhs, rhs),
+            _ => panic!("Unsupported op {:?}", *op),
+        }))
     }
 
     fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<Value, Value> {
@@ -520,13 +501,7 @@ impl Visitor<Value, Value> for Interpreter {
                 assert_eq!(func.ret_type, Type::Void, "A call to '{}' did not return a value, while return type is not void: {:?}", name, func.ret_type);
                 Ok(Value::RValue(RValue::Void))
             }
-            Err(r) =>
-                {
-                    let res_type = r.get_type();
-                    // TODO: cast to return type instead
-                    assert_eq!(func.ret_type, res_type, "Function '{}' return value of type {:?} while expected {:?}.", name, res_type, func.ret_type);
-                    Ok(r)
-                }
+            Err(r) => Ok(Value::RValue(r.to_rvalue().promote_to(func.ret_type.clone())))
         }
     }
 

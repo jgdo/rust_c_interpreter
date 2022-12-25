@@ -41,8 +41,14 @@ pub enum Type {
     Int,
     Char,
     Void,
-    Ptr(Box<Type>),
-    Array(usize, Box<Type>), // type is type of element
+    Ptr(Box<Type>), // element type
+    Array(usize, Box<Type>), // len, element type
+}
+
+impl Type {
+    pub fn create_ptr(element_type: Type) -> Type {
+       return Type::Ptr(Box::new(element_type));
+    }
 }
 
 #[derive(PartialEq, Debug)]
