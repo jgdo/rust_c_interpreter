@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::env::var;
 use regex::Regex;
 use crate::ast;
 use ast::Operator;
@@ -377,6 +376,7 @@ fn extract_token(str: &str) -> Token
             match str {
                 // TODO: clean up with keywords table
                 "int" => Token::Type(Type::Int),
+                "char" => Token::Type(Type::Char),
                 "void" => Token::Type(Type::Void),
                 "while" => Token::While,
                 "if" => Token::If,

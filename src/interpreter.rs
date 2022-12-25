@@ -1,25 +1,99 @@
 use std::cell::{RefCell};
 use std::collections::{HashMap};
+use std::convert::TryFrom;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
+use std::fmt;
 use crate::ast::*;
 
 pub type RValue = Literal;
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Type::Int => write!(f, "int"),
+            Type::Char => write!(f, "char"),
+            Type::Void => write!(f, "void"),
+            Type::Ptr(inner_type) => write!(f, "{}*", *inner_type),
+            Type::Array(len, inner_type) => write!(f, "{}[{}]", **inner_type, len),
+        }
+    }
+}
 
 impl RValue {
     fn get_type(&self) -> Type {
         match self {
             RValue::Int(_) => Type::Int,
+            RValue::Char(_) => Type::Char,
             RValue::Void => Type::Void,
             RValue::Ptr(t, _, _) => Type::Ptr(Box::new(t.clone())),
         }
+    }
+
+    fn promote_to(&self, target_type: Type) -> RValue {
+        match self {
+            RValue::Int(val) => {
+                match target_type {
+                    Type::Int => return self.clone(),
+                    Type::Char => return RValue::Char(std::char::from_u32(u32::try_from(*val).unwrap()).unwrap()),
+                    _ => {}
+                }
+            }
+            RValue::Char(val) => {
+                match target_type {
+                    Type::Int => return RValue::Int(u32::from(*val) as i32),
+                    Type::Char => return self.clone(),
+                    _ => {}
+                }
+            }
+            RValue::Void => {}
+            RValue::Ptr(_, _, _) => {}
+        };
+
+        panic!("Cannot convert {} to {}", self.get_type(), target_type);
+    }
+
+    // integer types will be promoted to bigger type
+    // (integer + ptr) or (ptr + integer) will be promoted to (ptr, int), swapping lhs/rhs if needed
+    fn promote_for_binary_op(self, rhs: RValue) -> (RValue, RValue) {
+        let target_type = rhs.get_type();
+
+        match self {
+            RValue::Int(_) => {
+                match target_type {
+                    Type::Int => return (self.clone(), rhs.clone()),
+                    Type::Char => return (self.clone(), rhs.promote_to(Type::Int)),
+                    Type::Ptr(_) => return (rhs.clone(), self.clone()),
+                    _ => {}
+                }
+            }
+            RValue::Char(_) => {
+                match target_type {
+                    Type::Int => return (self.promote_to(Type::Int), rhs.clone()),
+                    Type::Char => return (self.clone(), rhs.clone()),
+                    Type::Ptr(_) => return (rhs.promote_to(Type::Int), self.clone()),
+                    _ => {}
+                }
+            }
+            RValue::Void => {}
+            RValue::Ptr(_, _, _) => {
+                match target_type {
+                    Type::Int => return (self.clone(), rhs.clone()),
+                    Type::Char => return (self.clone(), rhs.promote_to(Type::Int)),
+                    _ => {}
+                }
+            }
+        };
+
+        panic!("Cannot promote values for binary op of types {} {}", self.get_type(), rhs.get_type());
     }
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum VariableMemory {
     Int(Vec<i32>),
-    Ptr(Type, Vec<(usize, usize)>), // all inner types will be same
+    Char(Vec<char>),
+    Ptr(Type, Vec<(usize, usize)>), // element type
 }
 
 pub type VariableMemoryRc = Rc<RefCell<VariableMemory>>;
@@ -58,7 +132,8 @@ impl LValue {
     fn get_type(&self) -> Type {
         match self.mem.borrow().deref() {
             VariableMemory::Int(_) => Type::Int,
-            VariableMemory::Ptr(t, _) => Type::Ptr(Box::new(t.clone())),
+            VariableMemory::Char(_) => Type::Char,
+            VariableMemory::Ptr(element_type, _) => Type::Ptr(Box::new(element_type.clone())),
         }
     }
 
@@ -66,18 +141,24 @@ impl LValue {
         match self.mem.borrow().deref() {
             VariableMemory::Int(vec) => {
                 match self.idx {
-                    Some(my_idx ) => RValue::Int(vec[my_idx]),
-                    None => RValue::Ptr(Type::Ptr(Box::new(Type::Int)), Rc::as_ptr(&self.mem) as usize, 0)
+                    Some(my_idx) => RValue::Int(vec[my_idx]),
+                    None => RValue::Ptr(Type::Int, Rc::as_ptr(&self.mem) as usize, 0)
                 }
-            },
+            }
+            VariableMemory::Char(vec) => {
+                match self.idx {
+                    Some(my_idx) => RValue::Char(vec[my_idx]),
+                    None => RValue::Ptr(Type::Char, Rc::as_ptr(&self.mem) as usize, 0)
+                }
+            }
             VariableMemory::Ptr(t, vec) => RValue::Ptr(t.clone(), vec[self.idx.unwrap()].0, vec[self.idx.unwrap()].1)
         }
     }
 
     fn assign(&mut self, value: RValue) {
         match self.mem.borrow_mut().deref_mut() {
-            // TODO static cast value to right type
-            VariableMemory::Int(vec) => { vec[self.idx.unwrap()] = enum_cast!(value, RValue::Int) }
+            VariableMemory::Int(vec) => vec[self.idx.unwrap()] = enum_cast!(value.promote_to(Type::Int), RValue::Int),
+            VariableMemory::Char(vec) => vec[self.idx.unwrap()] = enum_cast!(value.promote_to(Type::Char), RValue::Char),
             VariableMemory::Ptr(t, vec) => {
                 let (value_t, value_hash, value_idx) = match value {
                     RValue::Ptr(t, h, i) => (t, h, i),
@@ -154,58 +235,28 @@ impl InterpreterMemory {
     }
 
     pub fn add_variable(&mut self, name: String, var_type: &Type, init_value: RValue) {
-        /*
-
-        let value = match t {
-            Type::Int => opt_init.as_ref().map_or(RValue::Int(0),
-                                                  |expr| enum_check!(self.visit_expr(&expr).unwrap().to_rvalue(), RValue::Int)),
-            Type::Void => panic!("Cannot declare variable {} with type void.", name),
-            Type::Ptr(t_var) => opt_init.as_ref().map_or(RValue::Ptr(t_var.deref().clone(), 0, 0),
-                                                         |expr| {
-                                                             match self.visit_expr(&expr).unwrap().to_rvalue() {
-                                                                 RValue::Ptr(t_value, h, i) => {
-                                                                     assert_eq!(t_var.deref().clone(), t_value, "trying to assign a pointer an address to wrong type");
-                                                                     RValue::Ptr(t_value, h, i)
-                                                                 }
-                                                                 _ => panic!("trying to assign something to a pointer that isn't an address"),
-                                                             }
-                                                         }),
-        };
-
-         */
-
-        /*
-        let mem = match value {
-            RValue::Int(val) => {
-                VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![val])))
-            }
-            RValue::Void => panic!("Cannot instantiate void variable!"),
-            RValue::Ptr(t, hash, idx) => {
-                VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)])))
-            }
-        };
-        */
-
-        // TODO properly promote init_value to t type
         let mem = match var_type {
             Type::Int => {
-                VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![enum_cast!(init_value, RValue::Int)])))
-            },
+                VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![enum_cast!(init_value.promote_to(Type::Int), RValue::Int)])))
+            }
+            Type::Char => {
+                VariableMemoryRc::new(RefCell::new(VariableMemory::Char(vec![enum_cast!(init_value.promote_to(Type::Char), RValue::Char)])))
+            }
             Type::Void => panic!("Cannot declare variable {} with type void.", name),
             Type::Ptr(t_ptr) => {
                 match init_value {
                     RValue::Ptr(t, hash, idx) => {
                         assert_eq!(**t_ptr, t, "Source pointer type does not match to target pointer type");
                         VariableMemoryRc::new(RefCell::new(VariableMemory::Ptr(t.clone(), vec![(hash, idx)])))
-                    } ,
+                    }
                     _ => panic!("trying to assign something to a pointer that isn't an address")
                 }
-            },
+            }
             Type::Array(array_len, elem_type_box) => {
                 assert_eq!(**elem_type_box, Type::Int, "only int arrays supported");
                 let init_elem = enum_cast!(init_value, RValue::Int);
                 VariableMemoryRc::new(RefCell::new(VariableMemory::Int(vec![init_elem; *array_len])))
-            },
+            }
         };
 
         self.all_inst.insert(Rc::as_ptr(&mem) as usize, mem.clone());
@@ -282,12 +333,16 @@ impl Interpreter {
     }
 
     fn op_add(&mut self, lhs: Value, rhs: Value) -> Value {
-        match lhs.to_rvalue() {
+        let (lhs, rhs) = lhs.to_rvalue().promote_for_binary_op(rhs.to_rvalue());
+
+        match lhs {
             // integer add
-            RValue::Int(lhs) =>  Value::RValue(RValue::Int(lhs + enum_cast!(rhs.to_rvalue(), RValue::Int))) ,
+            RValue::Int(lhs) => Value::RValue(RValue::Int(lhs + enum_cast!(rhs, RValue::Int))),
+            RValue::Char(lhs) => Value::RValue(RValue::Char(char::try_from(lhs as u32 + enum_cast!(rhs, RValue::Char) as u32).unwrap())),
             // pointer add
-            RValue::Ptr(elem_type, hash, index) => Value::RValue(RValue::Ptr(elem_type, hash, (index as i32 + enum_cast!(rhs.to_rvalue(), RValue::Int)) as usize)),
-                _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
+            RValue::Ptr(elem_type, hash, index) =>
+                Value::RValue(RValue::Ptr(elem_type, hash, (index as i32 + enum_cast!(rhs, RValue::Int)) as usize)),
+            _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
         }
     }
 
@@ -323,6 +378,15 @@ impl Interpreter {
         match lhs.to_rvalue() {
             RValue::Int(lhs) => { Value::RValue(RValue::Int(if lhs > enum_cast!(rhs.to_rvalue(), RValue::Int) { 1 } else { 0 })) }
             _ => panic!("Cannot apply add on {:?}, {:?}", lhs, rhs)
+        }
+    }
+
+    fn print_value(&self, val: RValue) {
+        match val {
+            RValue::Int(val) => print!("{}", val),
+            RValue::Char(val) => print!("{}", val),
+            RValue::Void => panic!("Cannot print void value"),
+            RValue::Ptr(target_type, hash, idx) => print!("{}*({:#x}:{})", target_type, hash, idx),
         }
     }
 }
@@ -379,15 +443,17 @@ impl Visitor<Value, Value> for Interpreter {
         let value = match t {
             Type::Int => opt_init.as_ref().map_or(RValue::Int(0),
                                                   |expr| self.visit_expr(&expr).unwrap().to_rvalue()),
+            Type::Char => opt_init.as_ref().map_or(RValue::Char('\0'),
+                                                   |expr| self.visit_expr(&expr).unwrap().to_rvalue()),
             Type::Void => panic!("Cannot declare variable {} with type void.", name),
             Type::Ptr(t_var) => opt_init.as_ref().map_or(RValue::Ptr(t_var.deref().clone(), 0, 0),
-                                                         |expr| {  self.visit_expr(&expr).unwrap().to_rvalue()}),
+                                                         |expr| { self.visit_expr(&expr).unwrap().to_rvalue() }),
 
             Type::Array(_, _) => opt_init.as_ref().map_or(RValue::Int(0),
-                                                                               |expr| self.visit_expr(&expr).unwrap().to_rvalue()),
+                                                          |expr| self.visit_expr(&expr).unwrap().to_rvalue()),
         };
 
-        self.variables.add_variable(name.clone(), t,value.clone());
+        self.variables.add_variable(name.clone(), t, value.clone());
         return Ok(Value::RValue(value));
     }
 
@@ -418,10 +484,11 @@ impl Visitor<Value, Value> for Interpreter {
         return Ok(Value::RValue(RValue::Void));
     }
 
+
     fn visit_function_call(&mut self, name: &str, args: &Vec<Value>) -> Result<Value, Value> {
         if name == "print" {
             for value in args.iter() {
-                print!("{} ", enum_cast!(value.to_rvalue(), RValue::Int));
+                self.print_value(value.to_rvalue());
             }
             println!();
 
@@ -468,7 +535,7 @@ impl Visitor<Value, Value> for Interpreter {
 
         for (name, value) in variables {
             let r_value = value.to_rvalue();
-            self.variables.add_variable(name.clone(), &r_value.get_type() ,r_value);
+            self.variables.add_variable(name.clone(), &r_value.get_type(), r_value);
         }
 
         let mut func = || -> Result<Value, Value> {

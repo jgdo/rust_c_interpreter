@@ -16,8 +16,9 @@ pub enum Operator {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Literal {
     Int(i32),
+    Char(char),
     Void,
-    Ptr(Type, usize, usize), // type, hash, index
+    Ptr(Type, usize, usize), // element type, hash, index
 }
 
 #[derive(PartialEq, Debug)]
@@ -38,9 +39,10 @@ pub enum Expr {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
     Int,
+    Char,
     Void,
     Ptr(Box<Type>),
-    Array(usize, Box<Type>),
+    Array(usize, Box<Type>), // type is type of element
 }
 
 #[derive(PartialEq, Debug)]

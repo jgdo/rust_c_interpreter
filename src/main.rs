@@ -45,6 +45,9 @@ fn main() {
 
     int main()
     {
+        char c = 50;
+
+
         foo();
 
         int i = 1;
@@ -71,6 +74,15 @@ fn main() {
        print(arr[0]);
        print(arr[1]);
        print(arr[2]);
+
+       print(c);
+
+       int ci;
+       ci = 5 + c;
+
+       print(ci);
+
+       print(arr+1);
 
        return fac(5);
     }
