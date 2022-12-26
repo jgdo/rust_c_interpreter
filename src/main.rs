@@ -9,7 +9,7 @@ use ast::Visitor;
 use crate::interpreter::Interpreter;
 
 fn main() {
-    let tokens = parser::tokenize(r"
+    let tokens = parser::tokenize(r#"
 
     int gcd(int a, int b) {
         while (a != b) {
@@ -82,11 +82,13 @@ fn main() {
 
        print(ci);
 
+        print("arr+1");
+
        print(arr+1);
 
        return fac(5);
     }
-    ");
+    "#);
 
     // println!("{:?}", tokens);
     let trans_unit = parser::parse_translation_unit(tokens);

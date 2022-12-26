@@ -385,6 +385,10 @@ fn extract_token(str: &str) -> Token
                 _ => Token::Identifier(str.parse().unwrap()),
             }
         }
+        '\"' => {
+            let len = str.len();
+            Token::Literal(Literal::Str(str[1..len-1].to_string()))
+        },
         '0'..='9' => Token::Literal(Literal::Int(str.parse::<i32>().unwrap())),
         '(' => Token::LP,
         ')' => Token::RP,
@@ -409,7 +413,7 @@ fn extract_token(str: &str) -> Token
 
 pub fn tokenize(text: &str) -> Vec<Token> {
     // TODO this will actually match more than it should, fix eventually
-    let re = Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,|&|\[|]").unwrap();
+    let re = Regex::new(r#"([a-zA-Z_][a-zA-Z0-9_]*)|\+|-|\*|/|(=)|(!=)|([0-9]+)|\(|\)|;|\{|}|>|,|&|\[|]|("[^"]*")"#).unwrap();
 
     let mut res: Vec<Token> = vec![];
     for m in re.find_iter(text) {
@@ -429,7 +433,7 @@ mod tests {
 
     #[test]
     fn tokenize() {
-        let tokes = tok::tokenize("(5 +3)- (2 )     *   7");
+        let tokes = tok::tokenize("(5 +3)- (2 )     *   7 = \"bla\"");
 
         let expected = vec![
             tok::Token::LP,
@@ -443,6 +447,8 @@ mod tests {
             tok::Token::RP,
             tok::Token::Operator(ast::Operator::Times),
             tok::Token::Literal(Literal::Int(7)),
+            tok::Token::Operator(ast::Operator::Eq),
+            tok::Token::Literal(Literal::Str("bla".to_string())),
         ];
 
         assert_eq!(tokes, expected);

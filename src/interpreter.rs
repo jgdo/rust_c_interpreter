@@ -27,6 +27,7 @@ impl RValue {
             RValue::Char(_) => Type::Char,
             RValue::Void => Type::Void,
             RValue::Ptr(t, _, _) => Type::create_ptr(t.clone()),
+            RValue::Str(_) => Type::create_ptr(Type::Char),
         }
     }
 
@@ -48,7 +49,10 @@ impl RValue {
             }
             RValue::Void => if target_type == Type::Void { return self.clone(); },
             RValue::Ptr(self_elem_type, _, _) =>
-                if target_type == Type::create_ptr(self_elem_type.clone()) { return self.clone(); }
+                if target_type == Type::create_ptr(self_elem_type.clone()) { return self.clone(); },
+            // TODO RValue::Str(string) =>
+            //    if target_type == Type::create_ptr(Type::Char) { return self.clone(); },
+            _ => {}
         };
 
         panic!("Cannot convert {} to {}", self.get_type(), target_type);
@@ -304,7 +308,8 @@ impl Interpreter {
                     Type::Char => return (lhs.clone(), rhs.promote_to(Type::Int)),
                     _ => {}
                 }
-            }
+            },
+            _ => {}
         };
 
         panic!("Cannot promote values for binary op of types {} {}", lhs.get_type(), rhs.get_type());
@@ -363,6 +368,7 @@ impl Interpreter {
             RValue::Char(val) => print!("{}", val),
             RValue::Void => panic!("Cannot print void value"),
             RValue::Ptr(target_type, hash, idx) => print!("{}*({:#x}:{})", target_type, hash, idx),
+            RValue::Str(string) => print!("{}", string),
         }
     }
 }

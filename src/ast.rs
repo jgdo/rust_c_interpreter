@@ -19,6 +19,7 @@ pub enum Literal {
     Char(char),
     Void,
     Ptr(Type, usize, usize), // element type, hash, index
+    Str(String),
 }
 
 #[derive(PartialEq, Debug)]
