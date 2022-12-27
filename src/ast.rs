@@ -53,12 +53,27 @@ impl Type {
 }
 
 #[derive(PartialEq, Debug)]
+pub struct VarDecl
+{
+    pub var_type: Type,
+    pub name: String,
+    pub init_expr: Option<Expr>,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum InitStmt {
+    Expr(Expr),
+    VarDecl(VarDecl),
+}
+
+#[derive(PartialEq, Debug)]
 pub enum Stmt {
     Empty,
     Expr(Expr),
-    VarDecl(Type, String, Option<Expr>),
+    VarDecl(VarDecl),
     Compound(Box<CompoundStmt>),
     While(Expr, Box<Stmt>),
+    For(InitStmt, Expr, Expr, Box<Stmt>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     Return(Expr),
 }
@@ -102,9 +117,10 @@ pub trait Visitor<R, E> where E: Debug {
     fn visit_literal(&mut self, e: &Literal) -> Result<R, E>;
     fn visit_unary_expr(&mut self, expr: &Expr, op: &Operator) -> Result<R, E>;
     fn visit_binary_exp(&mut self, lhs: &Expr, rhs: &Expr, op: &Operator) -> Result<R, E>;
-    fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<R, E>;
+    fn visit_var_decl(&mut self, var_decl: &VarDecl) -> Result<R, E>;
     fn visit_var(&mut self, var: &Variable) -> Result<R, E>;
     fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> Result<R, E>;
+    fn visit_for(&mut self, init: &InitStmt, cond: &Expr, incr: &Expr, body: &Stmt) -> Result<R, E>;
     fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<R, E>;
     fn visit_empty(&mut self) -> Result<R, E>;
     fn visit_function_call(&mut self, name: &str, args: &Vec<R>) -> Result<R, E>;
@@ -126,15 +142,23 @@ pub trait Visitor<R, E> where E: Debug {
         }
     }
 
+    fn visit_init_stmt(&mut self, init_stmt: &InitStmt) -> Result<R, E> {
+        match init_stmt {
+            InitStmt::Expr(expr) => self.visit_expr(expr),
+            InitStmt::VarDecl(var_decl) => self.visit_var_decl(var_decl),
+        }
+    }
+
     fn visit_statement(&mut self, stmt: &Stmt) -> Result<R, E> {
         match stmt {
             Stmt::Empty => self.visit_empty(),
             Stmt::Expr(ref expr) => self.visit_expr(expr),
-            Stmt::VarDecl(ref t, ref name, ref opt_init) => self.visit_var_decl(t, name, opt_init),
+            Stmt::VarDecl(ref var_decl) => self.visit_var_decl(var_decl),
             Stmt::Compound(ref compound) => self.visit_compound_statement(compound, &HashMap::new()),
             Stmt::While(ref cond, ref body) => self.visit_while(cond, body),
+            Stmt::For(ref init, ref cond, ref incr, ref body) => self.visit_for(init, cond, incr, body),
             Stmt::If(cond, ref body_if, ref opt_body_else) => self.visit_if(cond, body_if, opt_body_else),
-            Stmt::Return(ref expr) => self.visit_return(expr)
+            Stmt::Return(ref expr) => self.visit_return(expr),
         }
     }
 }

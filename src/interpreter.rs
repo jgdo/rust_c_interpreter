@@ -425,7 +425,11 @@ impl Visitor<Value, Value> for Interpreter {
         }))
     }
 
-    fn visit_var_decl(&mut self, t: &Type, name: &String, opt_init: &Option<Expr>) -> Result<Value, Value> {
+    fn visit_var_decl(&mut self, var_decl: &VarDecl) -> Result<Value, Value> {
+        let t =  &var_decl.var_type;
+        let name = &var_decl.name;
+        let opt_init = &var_decl.init_expr;
+
         // TODO: make a table of default int values per type instead
         let value = match t {
             Type::Int => opt_init.as_ref().map_or(RValue::Int(0),
@@ -449,11 +453,36 @@ impl Visitor<Value, Value> for Interpreter {
     }
 
     fn visit_while(&mut self, cond: &Expr, body: &Stmt) -> Result<Value, Value> {
-        while enum_cast!(self.visit_expr(cond)?.to_rvalue(), RValue::Int) != 0 {
+        while enum_cast!(self.visit_expr(cond).unwrap().to_rvalue(), RValue::Int) != 0 {
             self.visit_statement(body)?;
         }
 
         return Ok(Value::RValue(RValue::Void));
+    }
+
+    fn visit_for(&mut self, init: &InitStmt, cond: &Expr, incr: &Expr, body: &Stmt) -> Result<Value, Value> {
+        self.variables.push_scope();
+
+        let mut body_return: Option<Value> = None;
+
+        self.visit_init_stmt(init)?;
+        while enum_cast!(self.visit_expr(cond).unwrap().to_rvalue(), RValue::Int) != 0 {
+            let body_res = self.visit_statement(body);
+
+            if let Err(ret) = body_res {
+                body_return = Some(ret);
+                break;
+            }
+
+            self.visit_expr(incr).unwrap();
+        }
+
+        self.variables.pop_scope();
+
+        match body_return {
+            None => Ok(Value::RValue(RValue::Void)),
+            Some(err) => Err(err),
+        }
     }
 
     fn visit_if(&mut self, cond: &Expr, body_if: &Stmt, opt_body_else: &Option<Box<Stmt>>) -> Result<Value, Value> {

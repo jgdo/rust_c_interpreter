@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use crate::ast;
 use ast::Operator;
-use crate::ast::{CompoundStmt, Expr, ExtDecl, FuncDef, Param, Stmt, TranslationUnit, Type, Variable, Literal};
+use crate::ast::{CompoundStmt, Expr, ExtDecl, FuncDef, Param, Stmt, TranslationUnit, Type, Variable, Literal, VarDecl, InitStmt};
 use crate::ast::Operator::{Div, Eq, Greater, Minus, Neq, Plus, Times};
 
 
@@ -17,6 +17,7 @@ pub enum Token {
     Sem,
     Identifier(String),
     While,
+    For,
     Begin,
     // {
     End,
@@ -25,7 +26,8 @@ pub enum Token {
     Else,
     Comma,
     Return,
-    BBL, // [
+    BBL,
+    // [
     BBR, // ]
 }
 
@@ -202,10 +204,10 @@ impl Parser {
         let tok = self.take();
         match tok {
             Token::Literal(lit) =>
-                    match *lit {
-                        Literal::Int(val) => val,
-                        _ => panic!("Integer literal expected, found {:?}", *lit)
-                    },
+                match *lit {
+                    Literal::Int(val) => val,
+                    _ => panic!("Integer literal expected, found {:?}", *lit)
+                },
             _ => panic!("Integer literal expected, found {:?}", tok),
         }
     }
@@ -216,7 +218,7 @@ impl Parser {
             _ => panic!("Type expected"),
         };
 
-        while *self.peek() == Token::Operator(Times){
+        while *self.peek() == Token::Operator(Times) {
             self.take();
 
             var_type = Type::Ptr(Box::new(var_type));
@@ -233,28 +235,51 @@ impl Parser {
         return var_type;
     }
 
+    fn parse_var_decl(&mut self) -> VarDecl{
+        let var_type = self.parse_type();
+        let name = self.parse_identifier();
+
+        if *self.peek() == Token::Operator(Operator::Eq) {
+            self.take();
+            let init_expr = Some(self.parse_expr());
+            return VarDecl{var_type, name, init_expr};
+        }
+
+        return VarDecl{var_type, name, init_expr: None};
+    }
+
+    fn parse_init_stmt(&mut self) -> InitStmt {
+        match self.peek() {
+            Token::Type(_) => InitStmt::VarDecl(self.parse_var_decl()),
+            _ => InitStmt::Expr(self.parse_expr()),
+        }
+    }
+
     fn parse_statement(&mut self) -> Stmt {
         match self.peek() {
             Token::Type(_) => {
-                let t = self.parse_type();
-                let name = self.parse_identifier();
-
-                let ret = if *self.peek() == Token::Operator(Operator::Eq) {
-                    self.take();
-                    let expr = self.parse_expr();
-                    Stmt::VarDecl(t, name, Some(expr))
-                } else {
-                    Stmt::VarDecl(t, name, None)
-                };
-
+                let var_decl = self.parse_var_decl();
                 self.accept(Token::Sem);
-                return ret;
+                return Stmt::VarDecl(var_decl);
             }
             Token::While => {
                 self.take();
                 let condition = self.parse_condition();
                 let body = self.parse_statement();
                 let ret = Stmt::While(condition, Box::new(body));
+                return ret;
+            }
+            Token::For => {
+                self.take();
+                self.accept(Token::LP);
+                let init = self.parse_init_stmt();
+                self.accept(Token::Sem);
+                let condition = self.parse_expr();
+                self.accept(Token::Sem);
+                let incr = self.parse_expr();
+                self.accept(Token::RP);
+                let body = self.parse_statement();
+                let ret = Stmt::For(init, condition, incr, Box::new(body));
                 return ret;
             }
             Token::If => {
@@ -379,6 +404,7 @@ fn extract_token(str: &str) -> Token
                 "char" => Token::Type(Type::Char),
                 "void" => Token::Type(Type::Void),
                 "while" => Token::While,
+                "for" => Token::For,
                 "if" => Token::If,
                 "else" => Token::Else,
                 "return" => Token::Return,
@@ -387,8 +413,8 @@ fn extract_token(str: &str) -> Token
         }
         '\"' => {
             let len = str.len();
-            Token::Literal(Literal::Str(str[1..len-1].to_string()))
-        },
+            Token::Literal(Literal::Str(str[1..len - 1].to_string()))
+        }
         '0'..='9' => Token::Literal(Literal::Int(str.parse::<i32>().unwrap())),
         '(' => Token::LP,
         ')' => Token::RP,

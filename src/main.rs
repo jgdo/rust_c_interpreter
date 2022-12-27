@@ -42,6 +42,21 @@ fn main() {
         *p = *p + 1;
     }
 
+    void swap(int* lhs, int* rhs) {
+        int tmp = *lhs;
+        *lhs = *rhs;
+        *rhs = tmp;
+    }
+
+    void sort(int* arr, int len) {
+        for(int i = 0; len > i; i = i+1) {
+           for(int j = i+1; len > j; j = j+1) {
+                if(arr[i] > arr[j]) {
+                    swap(&arr[i], arr+j);
+                }
+           }
+        }
+    }
 
     int main()
     {
@@ -67,24 +82,18 @@ fn main() {
 
        gcd(1071, 462);
 
-       int[5] arr = 3;
+       int[5] arr;
+       arr[0] = 23;
+       arr[1] = 5;
+       arr[2] = 42;
+       arr[3] =6;
+       arr[4] = 1;
 
-       arr[0] = 5;
-       bar(arr+2);
-       print(arr[0]);
-       print(arr[1]);
-       print(arr[2]);
-
-       print(c);
-
-       int ci;
-       ci = 5 + c;
-
-       print(ci);
-
-        print("arr+1");
-
-       print(arr+1);
+        sort(arr, 5);
+        print("sorted arr:");
+        for(int j = 0; 5 > j; j = j+1) {
+          print(arr[j]);
+        }
 
        return fac(5);
     }
